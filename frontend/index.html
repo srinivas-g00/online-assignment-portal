@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#4f46e5">
+  <title>Online Assignment Portal - Login / Register</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎓</text></svg>">
+</head>
+<body>
+  <!-- Header Bar -->
+  <header class="top">
+    <div class="brand">
+      <div class="brand-left">
+        <div class="logo">OA</div>
+        <div>
+          <h1>Online Assignment Portal</h1>
+          <small>Secure Submissions • Auto-Graded</small>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Auth Layout -->
+  <main class="auth-wrap">
+    <!-- Hero Information Section -->
+    <section class="auth-hero">
+      <h2>Assignments, exams and marks — all in one place.</h2>
+      <p>Separate portals for students and faculty. Protected by text captcha and secure password hashing.</p>
+      <div class="hero-badges">
+        <span class="badge">🚀 Direct Login</span>
+        <span class="badge">📧 Email OTP (Registration & Password Reset)</span>
+        <span class="badge">🔐 Captcha Protected</span>
+        <span class="badge">📝 Auto-Graded Assignments</span>
+      </div>
+    </section>
+
+    <!-- Interactive Auth Card -->
+    <section class="auth-card">
+      <!-- Role Toggle -->
+      <div class="role-toggle" role="tablist" aria-label="Select Account Role">
+        <button id="roleStudent" class="active" type="button">🎓 Student</button>
+        <button id="roleFaculty" type="button">🧑‍🏫 Faculty</button>
+      </div>
+
+      <!-- Mode Toggle -->
+      <div class="mode-toggle" role="tablist" aria-label="Select Action">
+        <button id="modeLogin" class="active" type="button">Login</button>
+        <button id="modeRegister" type="button">Register</button>
+      </div>
+
+      <!-- LOGIN FORM -->
+      <form id="loginForm" autocomplete="on">
+        <div class="field">
+          <label for="loginId">Username or Email</label>
+          <input id="loginId" type="text" required autocomplete="username" placeholder="Enter username or email">
+        </div>
+
+        <div class="field password">
+          <label for="loginPassword">Password</label>
+          <input id="loginPassword" type="password" required autocomplete="current-password" placeholder="Enter password">
+          <button type="button" class="eye" data-toggle="loginPassword" aria-label="Toggle password visibility">👁</button>
+        </div>
+
+        <!-- Captcha Text Row -->
+        <div class="captcha-row">
+          <div class="cap-text-box" id="loginCapText">-----</div>
+          <input id="loginCapAnswer" placeholder="Enter captcha" maxlength="5" required autocomplete="off">
+          <button type="button" class="refresh-cap" id="loginCapRefresh" title="Refresh Captcha">⟳</button>
+        </div>
+
+        <div style="text-align: right; margin: -4px 0 12px 0;">
+          <a href="#" id="forgotPasswordLink" style="font-size: 13px; color: #4f46e5; text-decoration: none; font-weight: 500;">Forgot Password?</a>
+        </div>
+
+        <div class="error-inline hidden" id="loginError" role="alert"></div>
+        <button class="btn block" type="submit">Login</button>
+      </form>
+
+      <!-- REGISTER FORM -->
+      <form id="registerForm" class="hidden" autocomplete="off">
+        <div class="two-col">
+          <div class="field">
+            <label for="regName">Full Name</label>
+            <input id="regName" type="text" required placeholder="John Doe">
+          </div>
+          <div class="field">
+            <label for="regUsername">Username</label>
+            <input id="regUsername" type="text" required placeholder="johndoe">
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="regEmail">Email Address</label>
+          <input id="regEmail" type="email" required placeholder="name@example.com">
+        </div>
+
+        <!-- Student Dynamic Fields -->
+        <div class="two-col" id="studentFields">
+          <div class="field">
+            <label for="regBranch">Branch</label>
+            <input id="regBranch" type="text" placeholder="e.g. CSE">
+          </div>
+          <div class="field">
+            <label for="regYear">Year</label>
+            <input id="regYear" type="text" placeholder="e.g. 2nd Year">
+          </div>
+        </div>
+
+        <!-- Faculty Dynamic Fields -->
+        <div class="two-col hidden" id="facultyFields">
+          <div class="field">
+            <label for="regSubject">Subject</label>
+            <input id="regSubject" type="text" placeholder="e.g. Operating Systems">
+          </div>
+          <div class="field">
+            <label for="regSlot">Slot</label>
+            <input id="regSlot" type="text" placeholder="e.g. Mon/Wed 10-11 AM">
+          </div>
+        </div>
+
+        <!-- Password Field -->
+        <div class="field password">
+          <label for="regPassword">Password (min 8 characters)</label>
+          <input id="regPassword" type="password" required minlength="8" placeholder="Create strong password">
+          <button type="button" class="eye" data-toggle="regPassword" aria-label="Toggle password visibility">👁</button>
+        </div>
+
+        <!-- Confirm Password Field -->
+        <div class="field password">
+          <label for="regConfirmPassword">Confirm Password</label>
+          <input id="regConfirmPassword" type="password" required minlength="8" placeholder="Re-enter password">
+          <button type="button" class="eye" data-toggle="regConfirmPassword" aria-label="Toggle password visibility">👁</button>
+        </div>
+
+        <!-- Captcha Text Row -->
+        <div class="captcha-row">
+          <div class="cap-text-box" id="regCapText">-----</div>
+          <input id="regCapAnswer" placeholder="Enter captcha" maxlength="5" required autocomplete="off">
+          <button type="button" class="refresh-cap" id="regCapRefresh" title="Refresh Captcha">⟳</button>
+        </div>
+
+        <div class="error-inline hidden" id="regError" role="alert"></div>
+        <button class="btn block" type="submit">Create Account</button>
+        <p class="note" style="margin-top: 12px; text-align: center;">An OTP code will be sent to your email to verify your account.</p>
+      </form>
+    </section>
+  </main>
+
+  <!-- Overlay Notification & Dialog Roots -->
+  <div id="noticeRoot"></div>
+  <div id="modalRoot"></div>
+
+  <!-- Client Scripts -->
+  <script src="js/api.js"></script>
+  <script src="js/auth.js"></script>
+</body>
+</html>

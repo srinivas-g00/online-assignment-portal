@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Faculty Dashboard - Online Assignment Portal</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>👨‍🏫</text></svg>">
+</head>
+<body>
+  <!-- Header / Navigation Bar -->
+  <header class="top">
+    <div class="brand">
+      <div class="brand-left">
+        <div class="logo">OA</div>
+        <div>
+          <h1>Online Assignment Portal</h1>
+          <small>Faculty Dashboard</small>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button class="btn secondary" onclick="logout()" type="button">Log out</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="main">
+    <!-- Faculty Profile Banner -->
+    <section class="bar">
+      <div class="who">
+        <div class="avatar" id="avatarInitial">F</div>
+        <div>
+          <b id="facName">Loading...</b>
+          <small id="facSubject">—</small>
+        </div>
+      </div>
+    </section>
+
+    <!-- Navigation Tabs -->
+    <nav class="tabs" aria-label="Faculty Navigation Tabs">
+      <button class="active" data-tab="requests" type="button">Student Requests</button>
+      <button data-tab="assignments" type="button">Assignments</button>
+      <button data-tab="newAssignment" type="button">Post Assignment</button>
+      <button data-tab="exams" type="button">Exams</button>
+      <button data-tab="newExam" type="button">Create Exam</button>
+    </nav>
+
+    <!-- Tab 1: Pending Student Requests -->
+    <section id="tab-requests">
+      <div class="panel">
+        <h3>Pending Student Requests</h3>
+        <div class="panel-body">
+          <div class="card-grid" id="requestsList"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 2: My Assignments & Submissions -->
+    <section id="tab-assignments" class="hidden">
+      <div class="panel">
+        <h3>My Assignments</h3>
+        <div class="panel-body" id="assignmentsList"></div>
+      </div>
+      <div id="assignmentDetailWrap" class="hidden" style="margin-top: 16px;">
+        <div class="panel">
+          <div class="panel-body" id="assignmentDetail"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 3: Post a New Assignment -->
+    <section id="tab-newAssignment" class="hidden">
+      <div class="panel">
+        <h3>Post a New Assignment</h3>
+        <div class="panel-body">
+          <div class="two-col">
+            <div class="field">
+              <label for="newTitle">Title</label>
+              <input id="newTitle" type="text" placeholder="e.g. Design Pattern Implementation">
+            </div>
+            <div class="field">
+              <label for="newTotalMarks">Total Marks</label>
+              <input id="newTotalMarks" type="number" value="100" min="1">
+            </div>
+          </div>
+          <div class="field">
+            <label for="newDesc">Description / Instructions</label>
+            <textarea id="newDesc" rows="3" placeholder="Provide problem requirements, submission guidelines..."></textarea>
+          </div>
+          <div class="two-col">
+            <div class="field">
+              <label for="newDueDate">Due Date</label>
+              <input id="newDueDate" type="date">
+            </div>
+            <div class="field">
+              <label for="newDueTime">Due Time</label>
+              <input id="newDueTime" type="time">
+            </div>
+          </div>
+          <div class="field">
+            <label for="newQFile">Question Paper (Optional, max 5MB)</label>
+            <input id="newQFile" type="file">
+          </div>
+          <button class="btn" id="postAssignmentBtn" type="button">Post Assignment</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 4: Exams & Attempt Results -->
+    <section id="tab-exams" class="hidden">
+      <div class="panel">
+        <h3>My Exams</h3>
+        <div class="panel-body" id="examsList"></div>
+      </div>
+      <div id="examResultsWrap" class="hidden" style="margin-top: 16px;">
+        <div class="panel">
+          <div class="panel-body" id="examResults"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 5: Create MCQ Exam -->
+    <section id="tab-newExam" class="hidden">
+      <div class="panel">
+        <h3>Create MCQ Exam</h3>
+        <div class="panel-body">
+          <div class="two-col">
+            <div class="field">
+              <label for="examTitle">Exam Title</label>
+              <input id="examTitle" type="text" placeholder="e.g. Mid-Term MCQ Assessment">
+            </div>
+            <div class="field">
+              <label for="examDuration">Duration (Minutes)</label>
+              <input id="examDuration" type="number" value="30" min="1">
+            </div>
+          </div>
+          <div class="two-col">
+            <div class="field">
+              <label for="examDate">Exam Date</label>
+              <input id="examDate" type="date">
+            </div>
+            <div class="field">
+              <label for="examStart">Start Time</label>
+              <input id="examStart" type="time">
+            </div>
+          </div>
+          <div id="questionsWrap" style="margin-top: 12px;"></div>
+          <div class="row-buttons" style="margin-top: 16px;">
+            <button class="btn secondary" id="addQuestionBtn" type="button">+ Add Question</button>
+            <button class="btn" id="createExamBtn" type="button">Create Exam</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Overlay Notification & Dialog Roots -->
+  <div id="noticeRoot"></div>
+  <div id="modalRoot"></div>
+
+  <!-- Client Scripts -->
+  <script src="js/api.js"></script>
+  <script src="js/faculty.js"></script>
+</body>
+</html>

@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Student Dashboard - Online Assignment Portal</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>👨‍🎓</text></svg>">
+</head>
+<body>
+  <!-- Header Bar -->
+  <header class="top">
+    <div class="brand">
+      <div class="brand-left">
+        <div class="logo">OA</div>
+        <div>
+          <h1>Online Assignment Portal</h1>
+          <small>Student Dashboard</small>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button class="btn secondary" onclick="logout()" type="button">Log out</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="main">
+    <!-- Student Profile Banner -->
+    <section class="bar">
+      <div class="who">
+        <div class="avatar" id="avatarInitial">S</div>
+        <div>
+          <b id="studentName">Loading...</b>
+          <small id="studentUsername">—</small>
+        </div>
+      </div>
+    </section>
+
+    <!-- Navigation Tabs -->
+    <nav class="tabs" aria-label="Student Navigation Tabs">
+      <button class="active" data-tab="faculties" type="button">Faculties</button>
+      <button data-tab="courses" type="button">My Courses</button>
+      <button data-tab="marks" type="button">My Marks</button>
+      <button data-tab="exams" type="button">Exams</button>
+    </nav>
+
+    <!-- Tab 1: Faculty Directory & Search -->
+    <section id="tab-faculties">
+      <div class="panel">
+        <h3>Explore Faculties</h3>
+        <div class="panel-body">
+          <div class="field" style="margin-bottom: 16px;">
+            <input id="facSearch" type="text" placeholder="Search by name, subject, or branch..." autocomplete="off">
+          </div>
+          <div class="card-grid" id="facultyList"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 2: Registered Courses -->
+    <section id="tab-courses" class="hidden">
+      <div class="panel">
+        <h3>My Registered Courses</h3>
+        <div class="panel-body">
+          <div class="card-grid" id="coursesList"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 3: Assignment Marks -->
+    <section id="tab-marks" class="hidden">
+      <div class="panel">
+        <h3>My Assignment Marks</h3>
+        <div class="panel-body">
+          <table>
+            <thead>
+              <tr>
+                <th>Assignment</th>
+                <th>Faculty</th>
+                <th>Submitted</th>
+                <th>Marks</th>
+              </tr>
+            </thead>
+            <tbody id="marksBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 4: MCQ Exams -->
+    <section id="tab-exams" class="hidden">
+      <div class="panel">
+        <h3>Available & Past Exams</h3>
+        <div class="panel-body">
+          <div class="card-grid" id="examsList"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Dynamic Faculty Detail & Submissions Wrap -->
+    <section id="facultyDetailWrap" class="hidden" style="margin-top: 18px;">
+      <div class="panel">
+        <div class="panel-body" id="facultyDetail"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Overlay Notification & Dialog Roots -->
+  <div id="noticeRoot"></div>
+  <div id="modalRoot"></div>
+
+  <!-- Client Scripts -->
+  <script src="js/api.js"></script>
+  <script src="js/student.js"></script>
+</body>
+</html>

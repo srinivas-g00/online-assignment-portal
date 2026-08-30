@@ -1,0 +1,8 @@
+@"
+node_modules/
+.env
+uploads/
+*.log
+*.sql
+assignment_portal_backup.sql
+"@ | Set-Content .gitignore
