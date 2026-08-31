@@ -504,8 +504,7 @@
             ? `
               <div style="margin:10px 0;">
                 <a
-                  href="/api/student/assignments/${encodeURIComponent(
-                    a.id
+                href="/uploads/questions/${encodeURIComponent(qFileName)}"
                   )}/question-paper"
                   target="_blank"
                   style="color:#4f46e5;font-weight:600;text-decoration:underline;">
