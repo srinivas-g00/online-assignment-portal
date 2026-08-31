@@ -40,43 +40,27 @@ router.use(requireRole("faculty"));
 // TEXT EXTRACTION FROM BUFFER
 // ============================================================
 
-async function extractTextFromBuffer(
-  buffer,
-  fileName
-) {
+async function extractTextFromBuffer(buffer, fileName) {
   try {
     if (!Buffer.isBuffer(buffer)) {
       return "";
     }
 
-    const extension =
-      path
-        .extname(
-          String(fileName || "")
-        )
-        .toLowerCase();
-
-    // --------------------------------------------------------
-    // TXT
-    // --------------------------------------------------------
+    const extension = path
+      .extname(String(fileName || ""))
+      .toLowerCase();
 
     if (extension === ".txt") {
       return buffer.toString("utf8");
     }
 
-    // --------------------------------------------------------
-    // DOCX
-    // --------------------------------------------------------
-
     if (extension === ".docx") {
       try {
-        const mammoth =
-          require("mammoth");
+        const mammoth = require("mammoth");
 
-        const result =
-          await mammoth.extractRawText({
-            buffer,
-          });
+        const result = await mammoth.extractRawText({
+          buffer,
+        });
 
         return result.value || "";
       } catch (err) {
@@ -89,17 +73,11 @@ async function extractTextFromBuffer(
       }
     }
 
-    // --------------------------------------------------------
-    // PDF
-    // --------------------------------------------------------
-
     if (extension === ".pdf") {
       try {
-        const pdfParse =
-          require("pdf-parse");
+        const pdfParse = require("pdf-parse");
 
-        const data =
-          await pdfParse(buffer);
+        const data = await pdfParse(buffer);
 
         return data.text || "";
       } catch (err) {
@@ -137,11 +115,10 @@ async function extractTextFromStorage(
       return "";
     }
 
-    const buffer =
-      await downloadFromSupabase(
-        bucket,
-        storagePath
-      );
+    const buffer = await downloadFromSupabase(
+      bucket,
+      storagePath
+    );
 
     return await extractTextFromBuffer(
       buffer,
@@ -160,68 +137,138 @@ async function extractTextFromStorage(
 }
 
 // ============================================================
+// ROBUST STORAGE PATH HELPERS
+// ============================================================
+//
+// New uploads are stored as:
+//
+// filename.pdf
+//
+// Older versions may have saved:
+//
+// answers/filename.pdf
+// uploads/answers/filename.pdf
+//
+// This helper generates possible paths so old records can
+// still be opened whenever the actual object exists.
+//
+
+function getPossibleStoragePaths(storagePath) {
+  const raw = String(storagePath || "").trim();
+
+  if (!raw) {
+    return [];
+  }
+
+  const normalized = raw.replace(/\\/g, "/");
+
+  const basename = path
+    .basename(normalized)
+    .trim();
+
+  const withoutLeadingSlash = normalized.replace(
+    /^\/+/,
+    ""
+  );
+
+  const withoutUploads = withoutLeadingSlash.replace(
+    /^uploads\/+/i,
+    ""
+  );
+
+  const withoutAnswers = withoutUploads.replace(
+    /^answers\/+/i,
+    ""
+  );
+
+  const candidates = [
+    normalized,
+    withoutLeadingSlash,
+    withoutUploads,
+    withoutAnswers,
+    basename,
+  ];
+
+  return [
+    ...new Set(
+      candidates.filter(Boolean)
+    ),
+  ];
+}
+
+// ============================================================
+// DOWNLOAD SUBMISSION WITH PATH FALLBACKS
+// ============================================================
+
+async function downloadSubmissionFile(storagePath) {
+  const possiblePaths =
+    getPossibleStoragePaths(storagePath);
+
+  let lastError = null;
+
+  for (const candidate of possiblePaths) {
+    try {
+      const buffer = await downloadFromSupabase(
+        BUCKETS.answers,
+        candidate
+      );
+
+      return {
+        buffer,
+        storagePath: candidate,
+      };
+    } catch (err) {
+      lastError = err;
+      console.warn(
+        `[Storage] Submission path failed: ${candidate} -> ${err.message}`
+      );
+    }
+  }
+
+  throw lastError || new Error(
+    "Submission file was not found in Supabase Storage."
+  );
+}
+
+// ============================================================
 // JACCARD SIMILARITY
 // ============================================================
 
-function calculateSimilarity(
-  text1,
-  text2
-) {
-  const getTokens =
-    (text) =>
-      String(text || "")
-        .toLowerCase()
-        .match(
-          /\b[a-z0-9_]{3,}\b/g
-        ) || [];
+function calculateSimilarity(text1, text2) {
+  const getTokens = (text) =>
+    String(text || "")
+      .toLowerCase()
+      .match(/\b[a-z0-9_]{3,}\b/g) || [];
 
-  const tokens1 =
-    getTokens(text1);
+  const tokens1 = getTokens(text1);
+  const tokens2 = getTokens(text2);
 
-  const tokens2 =
-    getTokens(text2);
-
-  if (
-    !tokens1.length ||
-    !tokens2.length
-  ) {
+  if (!tokens1.length || !tokens2.length) {
     return 0;
   }
 
-  const set1 =
-    new Set(tokens1);
-
-  const set2 =
-    new Set(tokens2);
+  const set1 = new Set(tokens1);
+  const set2 = new Set(tokens2);
 
   let intersection = 0;
 
-  set1.forEach(
-    (token) => {
-      if (
-        set2.has(token)
-      ) {
-        intersection++;
-      }
+  set1.forEach((token) => {
+    if (set2.has(token)) {
+      intersection++;
     }
-  );
+  });
 
-  const union =
-    new Set([
-      ...set1,
-      ...set2,
-    ]).size;
+  const union = new Set([
+    ...set1,
+    ...set2,
+  ]).size;
 
   if (!union) {
     return 0;
   }
 
   return Math.round(
-    (
-      intersection /
-      union
-    ) *
-      100
+    (intersection / union) * 100
   );
 }
 
@@ -229,57 +276,39 @@ function calculateSimilarity(
 // MIME TYPE
 // ============================================================
 
-function getMimeType(
-  fileName
-) {
-  const extension =
-    path
-      .extname(
-        String(
-          fileName || ""
-        )
-      )
-      .toLowerCase();
+function getMimeType(fileName) {
+  const extension = path
+    .extname(String(fileName || ""))
+    .toLowerCase();
 
   const mimeTypes = {
-    ".pdf":
-      "application/pdf",
+    ".pdf": "application/pdf",
 
-    ".doc":
-      "application/msword",
+    ".doc": "application/msword",
 
     ".docx":
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 
-    ".txt":
-      "text/plain",
+    ".txt": "text/plain",
 
-    ".png":
-      "image/png",
+    ".png": "image/png",
 
-    ".jpg":
-      "image/jpeg",
+    ".jpg": "image/jpeg",
 
-    ".jpeg":
-      "image/jpeg",
+    ".jpeg": "image/jpeg",
 
-    ".gif":
-      "image/gif",
+    ".gif": "image/gif",
 
-    ".webp":
-      "image/webp",
+    ".webp": "image/webp",
 
-    ".zip":
-      "application/zip",
+    ".zip": "application/zip",
 
-    ".ppt":
-      "application/vnd.ms-powerpoint",
+    ".ppt": "application/vnd.ms-powerpoint",
 
     ".pptx":
       "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 
-    ".xls":
-      "application/vnd.ms-excel",
+    ".xls": "application/vnd.ms-excel",
 
     ".xlsx":
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -295,70 +324,59 @@ function getMimeType(
 // PROFILE
 // ============================================================
 
-router.get(
-  "/me",
-  async (
-    req,
-    res
-  ) => {
-    try {
-      const result =
-        await db.query(
-          `
-          SELECT
-            u.id,
-            u.name,
-            u.username,
-            u.email,
+router.get("/me", async (req, res) => {
+  try {
+    const result = await db.query(
+      `
+      SELECT
+        u.id,
+        u.name,
+        u.username,
+        u.email,
 
-            COALESCE(
-              u.branch,
-              fp.branch,
-              ''
-            ) AS branch,
+        COALESCE(
+          u.branch,
+          fp.branch,
+          ''
+        ) AS branch,
 
-            COALESCE(
-              u.subject,
-              fp.subject,
-              ''
-            ) AS subject,
+        COALESCE(
+          u.subject,
+          fp.subject,
+          ''
+        ) AS subject,
 
-            COALESCE(
-              u.slot,
-              fp.slot,
-              ''
-            ) AS slot
+        COALESCE(
+          u.slot,
+          fp.slot,
+          ''
+        ) AS slot
 
-          FROM users u
+      FROM users u
 
-          LEFT JOIN faculty_profile fp
-            ON fp.user_id = u.id
+      LEFT JOIN faculty_profile fp
+        ON fp.user_id = u.id
 
-          WHERE u.id = $1
-          `,
-          [
-            req.user.id,
-          ]
-        );
+      WHERE u.id = $1
+      `,
+      [req.user.id]
+    );
 
-      return res.json(
-        result.rows[0] || {}
-      );
-    } catch (err) {
-      console.error(
-        "GET PROFILE ERROR:",
-        err.message
-      );
+    return res.json(
+      result.rows[0] || {}
+    );
+  } catch (err) {
+    console.error(
+      "GET PROFILE ERROR:",
+      err.message
+    );
 
-      return res.status(
-        500
-      ).json({
-        error:
-          "Could not fetch profile.",
-      });
-    }
+    return res.status(500).json({
+      error:
+        "Could not fetch profile.",
+    });
   }
-);
+});
 
 // ============================================================
 // STUDENTS
@@ -366,62 +384,55 @@ router.get(
 
 router.get(
   "/students",
-  async (
-    req,
-    res
-  ) => {
+  async (req, res) => {
     const status =
-      req.query.status ||
-      "pending";
+      req.query.status || "pending";
 
     try {
-      const result =
-        await db.query(
-          `
-          SELECT
-            e.id AS enrollment_id,
-            u.id AS student_id,
-            u.name,
-            u.username,
+      const result = await db.query(
+        `
+        SELECT
+          e.id AS enrollment_id,
+          u.id AS student_id,
+          u.name,
+          u.username,
 
-            COALESCE(
-              u.branch,
-              sp.branch,
-              ''
-            ) AS branch,
+          COALESCE(
+            u.branch,
+            sp.branch,
+            ''
+          ) AS branch,
 
-            COALESCE(
-              u.year,
-              sp.year,
-              ''
-            ) AS year,
+          COALESCE(
+            u.year,
+            sp.year,
+            ''
+          ) AS year,
 
-            COALESCE(
-              e.requested_at,
-              CURRENT_TIMESTAMP
-            ) AS requested_at
+          COALESCE(
+            e.requested_at,
+            CURRENT_TIMESTAMP
+          ) AS requested_at
 
-          FROM enrollments e
+        FROM enrollments e
 
-          JOIN users u
-            ON u.id =
-               e.student_id
+        JOIN users u
+          ON u.id = e.student_id
 
-          LEFT JOIN student_profile sp
-            ON sp.user_id =
-               u.id
+        LEFT JOIN student_profile sp
+          ON sp.user_id = u.id
 
-          WHERE e.faculty_id = $1
-            AND e.status = $2
+        WHERE e.faculty_id = $1
+          AND e.status = $2
 
-          ORDER BY
-            e.id DESC
-          `,
-          [
-            req.user.id,
-            status,
-          ]
-        );
+        ORDER BY
+          e.id DESC
+        `,
+        [
+          req.user.id,
+          status,
+        ]
+      );
 
       return res.json(
         result.rows || []
@@ -443,25 +454,17 @@ router.get(
 
 router.post(
   "/students/:enrollmentId/decision",
-  async (
-    req,
-    res
-  ) => {
-    const {
-      decision,
-    } = req.body;
+  async (req, res) => {
+    const { decision } =
+      req.body;
 
     if (
       ![
         "accepted",
         "rejected",
-      ].includes(
-        decision
-      )
+      ].includes(decision)
     ) {
-      return res.status(
-        400
-      ).json({
+      return res.status(400).json({
         error:
           "Invalid decision. Must be accepted or rejected.",
       });
@@ -473,7 +476,6 @@ router.post(
           `
           SELECT *
           FROM enrollments
-
           WHERE id = $1
             AND faculty_id = $2
           `,
@@ -487,9 +489,7 @@ router.post(
         result.rows[0];
 
       if (!enrollment) {
-        return res.status(
-          404
-        ).json({
+        return res.status(404).json({
           error:
             "Enrollment request not found.",
         });
@@ -498,8 +498,7 @@ router.post(
       await db.query(
         `
         UPDATE enrollments
-        SET
-          status = $1
+        SET status = $1
         WHERE id = $2
         `,
         [
@@ -509,6 +508,7 @@ router.post(
       );
 
       return res.json({
+        success: true,
         message:
           `Student ${decision}.`,
       });
@@ -518,9 +518,7 @@ router.post(
         err.message
       );
 
-      return res.status(
-        500
-      ).json({
+      return res.status(500).json({
         error:
           "Could not update enrollment decision.",
       });
@@ -535,10 +533,7 @@ router.post(
 router.post(
   "/assignments",
   uploadQuestion,
-  async (
-    req,
-    res
-  ) => {
+  async (req, res) => {
     const {
       title,
       description,
@@ -553,22 +548,15 @@ router.post(
       !dueDate ||
       !dueTime
     ) {
-      return res.status(
-        400
-      ).json({
+      return res.status(400).json({
         error:
           "Title, total marks, due date and due time are required.",
       });
     }
 
-    let storagePath =
-      null;
+    let storagePath = null;
 
     try {
-      // ------------------------------------------------------
-      // Upload question paper
-      // ------------------------------------------------------
-
       if (req.file) {
         const uploaded =
           await uploadToSupabase(
@@ -579,10 +567,6 @@ router.post(
         storagePath =
           uploaded.path;
       }
-
-      // ------------------------------------------------------
-      // Save assignment
-      // ------------------------------------------------------
 
       const result =
         await db.query(
@@ -615,38 +599,24 @@ router.post(
           `,
           [
             req.user.id,
-
+            String(title).trim(),
             String(
-              title
+              description || ""
             ).trim(),
-
-            String(
-              description ||
-                ""
-            ).trim(),
-
             storagePath,
-
             req.file
               ? req.file.originalname
               : null,
-
-            Number(
-              totalMarks
-            ),
-
+            Number(totalMarks),
             dueDate,
-
             dueTime,
           ]
         );
 
       return res.json({
         success: true,
-
         message:
           "Assignment posted.",
-
         assignmentId:
           result.rows[0].id,
       });
@@ -672,9 +642,7 @@ router.post(
         err.message
       );
 
-      return res.status(
-        500
-      ).json({
+      return res.status(500).json({
         error:
           "Failed to create assignment: " +
           err.message,
@@ -689,10 +657,7 @@ router.post(
 
 router.get(
   "/assignments",
-  async (
-    req,
-    res
-  ) => {
+  async (req, res) => {
     try {
       const result =
         await db.query(
@@ -703,9 +668,7 @@ router.get(
             (
               SELECT COUNT(*)
               FROM submissions s
-
-              WHERE s.assignment_id =
-                    a.id
+              WHERE s.assignment_id = a.id
             ) AS submission_count
 
           FROM assignments a
@@ -716,9 +679,7 @@ router.get(
             a.due_date DESC,
             a.due_time DESC
           `,
-          [
-            req.user.id,
-          ]
+          [req.user.id]
         );
 
       return res.json(
@@ -730,9 +691,7 @@ router.get(
         err.message
       );
 
-      return res.status(
-        500
-      ).json({
+      return res.status(500).json({
         error:
           "Could not fetch assignments.",
       });
@@ -746,21 +705,13 @@ router.get(
 
 router.get(
   "/assignments/:id/submissions",
-  async (
-    req,
-    res
-  ) => {
+  async (req, res) => {
     try {
-      // ------------------------------------------------------
-      // Verify assignment belongs to faculty
-      // ------------------------------------------------------
-
       const assignmentResult =
         await db.query(
           `
           SELECT *
           FROM assignments
-
           WHERE id = $1
             AND faculty_id = $2
           `,
@@ -774,47 +725,35 @@ router.get(
         assignmentResult.rows[0];
 
       if (!assignment) {
-        return res.status(
-          404
-        ).json({
+        return res.status(404).json({
           error:
             "Assignment not found.",
         });
       }
-
-      // ------------------------------------------------------
-      // Get submissions
-      // ------------------------------------------------------
 
       const submissionResult =
         await db.query(
           `
           SELECT
             s.*,
-
             u.name AS student_name,
             u.username AS student_username
 
           FROM submissions s
 
           JOIN users u
-            ON u.id =
-               s.student_id
+            ON u.id = s.student_id
 
-          WHERE s.assignment_id =
-                $1
+          WHERE s.assignment_id = $1
 
           ORDER BY
             s.submitted_at ASC
           `,
-          [
-            req.params.id,
-          ]
+          [req.params.id]
         );
 
       return res.json({
         assignment,
-
         submissions:
           submissionResult.rows,
       });
@@ -824,9 +763,7 @@ router.get(
         err.message
       );
 
-      return res.status(
-        500
-      ).json({
+      return res.status(500).json({
         error:
           "Could not fetch submissions.",
       });
@@ -835,32 +772,33 @@ router.get(
 );
 
 // ============================================================
-// VIEW STUDENT SUBMISSION
+// VIEW / DOWNLOAD STUDENT SUBMISSION
 // ============================================================
 //
-// Faculty can view/download the student's submitted file.
+// IMPORTANT:
 //
-// Security:
-//   - Faculty must be logged in.
-//   - Submission must exist.
-//   - Submission's assignment must belong to this faculty.
-//   - File is downloaded from the PRIVATE Supabase
-//     `answers` bucket.
+// Student files are private Supabase Storage objects.
 //
-// Frontend URL:
-//   /api/faculty/submissions/:submissionId/file
+// Faculty URL:
 //
-// ============================================================
+// /api/faculty/submissions/:submissionId/file
+//
+// The route verifies that the assignment belongs to the
+// currently logged-in faculty.
+//
+// It then downloads the actual object from:
+//
+// Supabase Storage -> answers
+//
+// It also supports older database path formats.
+//
 
 router.get(
   "/submissions/:submissionId/file",
-  async (
-    req,
-    res
-  ) => {
+  async (req, res) => {
     try {
       // ------------------------------------------------------
-      // Find submission and verify ownership
+      // Verify submission belongs to this faculty
       // ------------------------------------------------------
 
       const result =
@@ -880,8 +818,7 @@ router.get(
           FROM submissions s
 
           JOIN assignments a
-            ON a.id =
-               s.assignment_id
+            ON a.id = s.assignment_id
 
           WHERE s.id = $1
             AND a.faculty_id = $2
@@ -896,38 +833,60 @@ router.get(
         result.rows[0];
 
       if (!submission) {
-        return res.status(
-          404
-        ).json({
+        return res.status(404).json({
           error:
-            "Submission not found.",
+            "Submission not found or you do not have permission to access it.",
         });
       }
 
       // ------------------------------------------------------
-      // Check file path
+      // Verify file path exists
       // ------------------------------------------------------
 
       if (
-        !submission.file_path
+        !submission.file_path ||
+        !String(
+          submission.file_path
+        ).trim()
       ) {
-        return res.status(
-          404
-        ).json({
+        return res.status(404).json({
           error:
             "No submitted file is attached to this submission.",
         });
       }
 
       // ------------------------------------------------------
-      // Download from PRIVATE Supabase bucket
+      // Download using robust path handling
       // ------------------------------------------------------
 
-      const buffer =
-        await downloadFromSupabase(
-          BUCKETS.answers,
-          submission.file_path
+      let downloadResult;
+
+      try {
+        downloadResult =
+          await downloadSubmissionFile(
+            submission.file_path
+          );
+      } catch (storageError) {
+        console.error(
+          "SUBMISSION STORAGE FILE NOT FOUND:",
+          {
+            submissionId:
+              submission.id,
+            databasePath:
+              submission.file_path,
+            error:
+              storageError.message,
+          }
         );
+
+        return res.status(404).json({
+          error:
+            "Student submission file was not found in the Supabase answers bucket.",
+        });
+      }
+
+      const buffer =
+        downloadResult.buffer;
 
       // ------------------------------------------------------
       // Safe display filename
@@ -937,14 +896,13 @@ router.get(
         String(
           submission.file_original ||
             path.basename(
-              submission.file_path
+              downloadResult.storagePath
             ) ||
             "submission"
-        )
-          .replace(
-            /["\r\n]/g,
-            "_"
-          );
+        ).replace(
+          /["\r\n]/g,
+          "_"
+        );
 
       // ------------------------------------------------------
       // Response headers
@@ -952,9 +910,7 @@ router.get(
 
       res.setHeader(
         "Content-Type",
-        getMimeType(
-          displayName
-        )
+        getMimeType(displayName)
       );
 
       res.setHeader(
@@ -969,12 +925,15 @@ router.get(
 
       res.setHeader(
         "Cache-Control",
-        "private, no-store"
+        "private, no-store, max-age=0"
       );
 
-      return res.send(
-        buffer
+      res.setHeader(
+        "X-Content-Type-Options",
+        "nosniff"
       );
+
+      return res.send(buffer);
     } catch (err) {
       console.error(
         "VIEW STUDENT SUBMISSION ERROR:",
@@ -982,9 +941,7 @@ router.get(
       );
 
       if (!res.headersSent) {
-        return res.status(
-          500
-        ).json({
+        return res.status(500).json({
           error:
             "Could not open student submission: " +
             err.message,
@@ -1000,10 +957,7 @@ router.get(
 
 router.get(
   "/assignments/:id/question-paper",
-  async (
-    req,
-    res
-  ) => {
+  async (req, res) => {
     try {
       const result =
         await db.query(
@@ -1028,9 +982,7 @@ router.get(
         result.rows[0];
 
       if (!assignment) {
-        return res.status(
-          404
-        ).json({
+        return res.status(404).json({
           error:
             "Assignment not found.",
         });
@@ -1039,31 +991,54 @@ router.get(
       if (
         !assignment.question_file
       ) {
-        return res.status(
-          404
-        ).json({
+        return res.status(404).json({
           error:
             "Question paper has not been uploaded.",
         });
       }
 
-      const buffer =
-        await downloadFromSupabase(
-          BUCKETS.questions,
+      const paths =
+        getPossibleStoragePaths(
           assignment.question_file
         );
+
+      let buffer = null;
+      let usedPath = null;
+
+      for (const candidate of paths) {
+        try {
+          buffer =
+            await downloadFromSupabase(
+              BUCKETS.questions,
+              candidate
+            );
+
+          usedPath = candidate;
+          break;
+        } catch (err) {
+          console.warn(
+            `[Storage] Question paper path failed: ${candidate}`
+          );
+        }
+      }
+
+      if (!buffer) {
+        return res.status(404).json({
+          error:
+            "Question paper was not found in Supabase Storage.",
+        });
+      }
 
       const displayName =
         assignment.question_original ||
         path.basename(
-          assignment.question_file
+          usedPath ||
+            assignment.question_file
         );
 
       res.setHeader(
         "Content-Type",
-        getMimeType(
-          displayName
-        )
+        getMimeType(displayName)
       );
 
       res.setHeader(
@@ -1086,9 +1061,7 @@ router.get(
         "private, no-store"
       );
 
-      return res.send(
-        buffer
-      );
+      return res.send(buffer);
     } catch (err) {
       console.error(
         "FACULTY QUESTION PAPER ERROR:",
@@ -1096,9 +1069,7 @@ router.get(
       );
 
       if (!res.headersSent) {
-        return res.status(
-          500
-        ).json({
+        return res.status(500).json({
           error:
             "Could not open question paper.",
         });
@@ -1114,12 +1085,8 @@ router.get(
 router.post(
   "/assignments/:id/answer-key",
   uploadKey,
-  async (
-    req,
-    res
-  ) => {
-    let storagePath =
-      null;
+  async (req, res) => {
+    let storagePath = null;
 
     try {
       const assignmentResult =
@@ -1127,7 +1094,6 @@ router.post(
           `
           SELECT *
           FROM assignments
-
           WHERE id = $1
             AND faculty_id = $2
           `,
@@ -1141,9 +1107,7 @@ router.post(
         assignmentResult.rows[0];
 
       if (!assignment) {
-        return res.status(
-          404
-        ).json({
+        return res.status(404).json({
           error:
             "Assignment not found.",
         });
@@ -1151,13 +1115,8 @@ router.post(
 
       let keyText =
         String(
-          req.body.keyText ||
-            ""
+          req.body.keyText || ""
         ).trim();
-
-      // ------------------------------------------------------
-      // Upload answer key
-      // ------------------------------------------------------
 
       if (req.file) {
         const uploaded =
@@ -1189,9 +1148,7 @@ router.post(
         !keyText &&
         !storagePath
       ) {
-        return res.status(
-          400
-        ).json({
+        return res.status(400).json({
           error:
             "Provide answer-key text or upload a key document.",
         });
@@ -1221,7 +1178,6 @@ router.post(
 
       return res.json({
         success: true,
-
         message:
           "Answer key saved. You can now run auto-correction.",
       });
@@ -1247,9 +1203,7 @@ router.post(
         err.message
       );
 
-      return res.status(
-        500
-      ).json({
+      return res.status(500).json({
         error:
           "Could not save answer key: " +
           err.message,
@@ -1264,10 +1218,7 @@ router.post(
 
 router.post(
   "/assignments/:id/auto-correct",
-  async (
-    req,
-    res
-  ) => {
+  async (req, res) => {
     try {
       const assignmentId =
         req.params.id;
@@ -1280,9 +1231,7 @@ router.post(
       const penalty =
         Math.max(
           0,
-          Number(
-            penaltyMarks
-          ) || 0
+          Number(penaltyMarks) || 0
         );
 
       const threshold =
@@ -1290,9 +1239,7 @@ router.post(
           1,
           Math.min(
             100,
-            Number(
-              matchThreshold
-            ) || 70
+            Number(matchThreshold) || 70
           )
         );
 
@@ -1301,7 +1248,6 @@ router.post(
           `
           SELECT *
           FROM assignments
-
           WHERE id = $1
             AND faculty_id = $2
           `,
@@ -1315,9 +1261,7 @@ router.post(
         assignmentResult.rows[0];
 
       if (!assignment) {
-        return res.status(
-          404
-        ).json({
+        return res.status(404).json({
           error:
             "Assignment not found.",
         });
@@ -1325,8 +1269,7 @@ router.post(
 
       let answerKeyText =
         String(
-          assignment.answer_key ||
-            ""
+          assignment.answer_key || ""
         );
 
       if (
@@ -1349,12 +1292,8 @@ router.post(
         }
       }
 
-      if (
-        !answerKeyText.trim()
-      ) {
-        return res.status(
-          400
-        ).json({
+      if (!answerKeyText.trim()) {
+        return res.status(400).json({
           error:
             "No usable answer key was found. Save an answer key before running auto-correction.",
         });
@@ -1365,64 +1304,54 @@ router.post(
           `
           SELECT
             s.*,
-
             u.name AS student_name,
             u.username AS student_username
 
           FROM submissions s
 
           JOIN users u
-            ON u.id =
-               s.student_id
+            ON u.id = s.student_id
 
-          WHERE s.assignment_id =
-                $1
+          WHERE s.assignment_id = $1
 
           ORDER BY
             s.submitted_at ASC
           `,
-          [
-            assignmentId,
-          ]
+          [assignmentId]
         );
 
       const submissions =
         submissionResult.rows;
 
-      if (
-        !submissions.length
-      ) {
-        return res.status(
-          400
-        ).json({
+      if (!submissions.length) {
+        return res.status(400).json({
           error:
             "No submissions to evaluate.",
         });
       }
 
       // ------------------------------------------------------
-      // Download and extract submissions
+      // Download and extract student submissions
       // ------------------------------------------------------
 
-      for (
-        const sub of submissions
-      ) {
-        sub.extractedText =
-          "";
+      for (const sub of submissions) {
+        sub.extractedText = "";
 
-        if (
-          !sub.file_path
-        ) {
+        if (!sub.file_path) {
           continue;
         }
 
         try {
+          const storageResult =
+            await downloadSubmissionFile(
+              sub.file_path
+            );
+
           sub.extractedText =
-            await extractTextFromStorage(
-              BUCKETS.answers,
-              sub.file_path,
+            await extractTextFromBuffer(
+              storageResult.buffer,
               sub.file_original ||
-                sub.file_path
+                storageResult.storagePath
             );
         } catch (err) {
           console.warn(
@@ -1431,8 +1360,7 @@ router.post(
             err.message
           );
 
-          sub.extractedText =
-            "";
+          sub.extractedText = "";
         }
       }
 
@@ -1445,32 +1373,25 @@ router.post(
         i < submissions.length;
         i++
       ) {
-        submissions[i]
-          .duplicate_flag =
+        submissions[i].duplicate_flag =
           false;
 
-        submissions[i]
-          .matched_with =
-          [];
+        submissions[i].matched_with = [];
 
         for (
           let j = 0;
           j < submissions.length;
           j++
         ) {
-          if (
-            i === j
-          ) {
+          if (i === j) {
             continue;
           }
 
           const text1 =
-            submissions[i]
-              .extractedText;
+            submissions[i].extractedText;
 
           const text2 =
-            submissions[j]
-              .extractedText;
+            submissions[j].extractedText;
 
           if (
             !text1 ||
@@ -1487,23 +1408,16 @@ router.post(
               text2
             );
 
-          if (
-            similarity >= 70
-          ) {
-            submissions[i]
-              .duplicate_flag =
+          if (similarity >= 70) {
+            submissions[i].duplicate_flag =
               true;
 
-            submissions[i]
-              .matched_with
-              .push({
-                name:
-                  submissions[j]
-                    .student_name,
-
-                pct:
-                  similarity,
-              });
+            submissions[i].matched_with.push({
+              name:
+                submissions[j].student_name,
+              pct:
+                similarity,
+            });
           }
         }
       }
@@ -1512,13 +1426,10 @@ router.post(
       // Score submissions
       // ------------------------------------------------------
 
-      for (
-        const sub of submissions
-      ) {
+      for (const sub of submissions) {
         const answerText =
           String(
-            sub.extractedText ||
-              ""
+            sub.extractedText || ""
           ).trim();
 
         const keySimilarity =
@@ -1535,8 +1446,7 @@ router.post(
             assignment.total_marks
           ) || 0;
 
-        let calculatedMarks =
-          0;
+        let calculatedMarks = 0;
 
         if (
           keySimilarity >=
@@ -1560,9 +1470,7 @@ router.post(
         let feedback =
           `AI Score: ${keySimilarity}% match with answer key.`;
 
-        if (
-          !answerText
-        ) {
+        if (!answerText) {
           feedback =
             "AI Score: 0% - no readable text could be extracted from the submission.";
         }
@@ -1628,10 +1536,8 @@ router.post(
 
       return res.json({
         success: true,
-
         message:
           "Auto-correction completed successfully.",
-
         submissionsEvaluated:
           submissions.length,
       });
@@ -1641,9 +1547,7 @@ router.post(
         err.message
       );
 
-      return res.status(
-        500
-      ).json({
+      return res.status(500).json({
         error:
           "Auto-correction failed: " +
           err.message,
@@ -1658,13 +1562,8 @@ router.post(
 
 router.put(
   "/submissions/:id/marks",
-  async (
-    req,
-    res
-  ) => {
-    const {
-      marks,
-    } = req.body;
+  async (req, res) => {
+    const { marks } = req.body;
 
     try {
       const result =
@@ -1678,14 +1577,11 @@ router.put(
           FROM submissions s
 
           JOIN assignments a
-            ON a.id =
-               s.assignment_id
+            ON a.id = s.assignment_id
 
           WHERE s.id = $1
           `,
-          [
-            req.params.id,
-          ]
+          [req.params.id]
         );
 
       const sub =
@@ -1693,40 +1589,27 @@ router.put(
 
       if (
         !sub ||
-        Number(
-          sub.faculty_id
-        ) !==
-          Number(
-            req.user.id
-          )
+        Number(sub.faculty_id) !==
+          Number(req.user.id)
       ) {
-        return res.status(
-          404
-        ).json({
+        return res.status(404).json({
           error:
             "Submission not found.",
         });
       }
 
       const maxMarks =
-        Number(
-          sub.total_marks
-        ) || 100;
+        Number(sub.total_marks) ||
+        100;
 
       const parsedMarks =
-        Number(
-          marks
-        );
+        Number(marks);
 
       if (
-        Number.isNaN(
-          parsedMarks
-        ) ||
+        Number.isNaN(parsedMarks) ||
         parsedMarks < 0
       ) {
-        return res.status(
-          400
-        ).json({
+        return res.status(400).json({
           error:
             "Enter a valid mark value.",
         });
@@ -1760,10 +1643,8 @@ router.put(
 
       return res.json({
         success: true,
-
         message:
           "Marks updated.",
-
         marks:
           finalMarks,
       });
@@ -1773,9 +1654,7 @@ router.put(
         err.message
       );
 
-      return res.status(
-        500
-      ).json({
+      return res.status(500).json({
         error:
           "Could not update marks.",
       });
@@ -1789,10 +1668,7 @@ router.put(
 
 router.post(
   "/submissions/:id/post",
-  async (
-    req,
-    res
-  ) => {
+  async (req, res) => {
     try {
       const result =
         await db.query(
@@ -1804,14 +1680,11 @@ router.post(
           FROM submissions s
 
           JOIN assignments a
-            ON a.id =
-               s.assignment_id
+            ON a.id = s.assignment_id
 
           WHERE s.id = $1
           `,
-          [
-            req.params.id,
-          ]
+          [req.params.id]
         );
 
       const sub =
@@ -1819,30 +1692,21 @@ router.post(
 
       if (
         !sub ||
-        Number(
-          sub.faculty_id
-        ) !==
-          Number(
-            req.user.id
-          )
+        Number(sub.faculty_id) !==
+          Number(req.user.id)
       ) {
-        return res.status(
-          404
-        ).json({
+        return res.status(404).json({
           error:
             "Submission not found.",
         });
       }
 
       if (
-        sub.final_marks ===
-          null ||
+        sub.final_marks === null ||
         sub.final_marks ===
           undefined
       ) {
-        return res.status(
-          400
-        ).json({
+        return res.status(400).json({
           error:
             "Set marks before posting.",
         });
@@ -1859,14 +1723,11 @@ router.post(
 
         WHERE id = $1
         `,
-        [
-          sub.id,
-        ]
+        [sub.id]
       );
 
       return res.json({
         success: true,
-
         message:
           "Marks posted to student.",
       });
@@ -1876,9 +1737,7 @@ router.post(
         err.message
       );
 
-      return res.status(
-        500
-      ).json({
+      return res.status(500).json({
         error:
           "Could not post marks.",
       });
@@ -1892,10 +1751,7 @@ router.post(
 
 router.post(
   "/exams",
-  async (
-    req,
-    res
-  ) => {
+  async (req, res) => {
     const {
       title,
       examDate,
@@ -1910,26 +1766,16 @@ router.post(
       !examDate ||
       !startTime ||
       !durationMin ||
-      !Array.isArray(
-        questions
-      ) ||
+      !Array.isArray(questions) ||
       !questions.length
     ) {
-      return res.status(
-        400
-      ).json({
+      return res.status(400).json({
         error:
           "Title, date, start time, duration and at least one question are required.",
       });
     }
 
-    // --------------------------------------------------------
-    // Validate questions
-    // --------------------------------------------------------
-
-    for (
-      const q of questions
-    ) {
+    for (const q of questions) {
       if (
         !q.questionText ||
         !q.optionA ||
@@ -1938,34 +1784,23 @@ router.post(
         !q.optionD ||
         !q.correctOption
       ) {
-        return res.status(
-          400
-        ).json({
+        return res.status(400).json({
           error:
             "Every question must contain question text, four options and correct option.",
         });
       }
 
       const correctOption =
-        String(
-          q.correctOption
-        )
+        String(q.correctOption)
           .trim()
           .toUpperCase();
 
       if (
-        ![
-          "A",
-          "B",
-          "C",
-          "D",
-        ].includes(
+        !["A", "B", "C", "D"].includes(
           correctOption
         )
       ) {
-        return res.status(
-          400
-        ).json({
+        return res.status(400).json({
           error:
             "Correct option must be A, B, C or D.",
         });
@@ -1974,16 +1809,9 @@ router.post(
 
     const totalMarks =
       questions.reduce(
-        (
-          sum,
-          q
-        ) =>
+        (sum, q) =>
           sum +
-          (
-            Number(
-              q.marks
-            ) || 1
-          ),
+          (Number(q.marks) || 1),
         0
       );
 
@@ -1991,13 +1819,7 @@ router.post(
       await db.connect();
 
     try {
-      await client.query(
-        "BEGIN"
-      );
-
-      // ------------------------------------------------------
-      // CREATE EXAM
-      // ------------------------------------------------------
+      await client.query("BEGIN");
 
       const examResult =
         await client.query(
@@ -2026,38 +1848,23 @@ router.post(
           `,
           [
             req.user.id,
-            String(
-              title
-            ).trim(),
+            String(title).trim(),
             examDate,
             startTime,
-            Number(
-              durationMin
-            ),
+            Number(durationMin),
             totalMarks,
             subject
-              ? String(
-                  subject
-                ).trim()
+              ? String(subject).trim()
               : null,
           ]
         );
 
       const examId =
-        examResult.rows[0]
-          .id;
+        examResult.rows[0].id;
 
-      // ------------------------------------------------------
-      // INSERT QUESTIONS
-      // ------------------------------------------------------
-
-      for (
-        const q of questions
-      ) {
+      for (const q of questions) {
         const correctOption =
-          String(
-            q.correctOption
-          )
+          String(q.correctOption)
             .trim()
             .toUpperCase();
 
@@ -2088,49 +1895,28 @@ router.post(
           `,
           [
             examId,
-
             String(
               q.questionText
             ).trim(),
-
-            String(
-              q.optionA
-            ).trim(),
-
-            String(
-              q.optionB
-            ).trim(),
-
-            String(
-              q.optionC
-            ).trim(),
-
-            String(
-              q.optionD
-            ).trim(),
-
+            String(q.optionA).trim(),
+            String(q.optionB).trim(),
+            String(q.optionC).trim(),
+            String(q.optionD).trim(),
             correctOption,
-
             Math.max(
               1,
-              Number(
-                q.marks
-              ) || 1
+              Number(q.marks) || 1
             ),
           ]
         );
       }
 
-      await client.query(
-        "COMMIT"
-      );
+      await client.query("COMMIT");
 
       return res.json({
         success: true,
-
         message:
           "Exam created.",
-
         examId,
       });
     } catch (err) {
@@ -2152,9 +1938,7 @@ router.post(
         err.message
       );
 
-      return res.status(
-        500
-      ).json({
+      return res.status(500).json({
         error:
           "Could not create exam: " +
           err.message,
@@ -2171,10 +1955,7 @@ router.post(
 
 router.get(
   "/exams",
-  async (
-    req,
-    res
-  ) => {
+  async (req, res) => {
     try {
       const result =
         await db.query(
@@ -2188,9 +1969,7 @@ router.get(
             exam_date DESC,
             start_time DESC
           `,
-          [
-            req.user.id,
-          ]
+          [req.user.id]
         );
 
       return res.json(
@@ -2202,9 +1981,7 @@ router.get(
         err.message
       );
 
-      return res.status(
-        500
-      ).json({
+      return res.status(500).json({
         error:
           "Could not fetch exams.",
       });
@@ -2218,10 +1995,7 @@ router.get(
 
 router.get(
   "/exams/:id/results",
-  async (
-    req,
-    res
-  ) => {
+  async (req, res) => {
     try {
       const examResult =
         await db.query(
@@ -2242,9 +2016,7 @@ router.get(
         examResult.rows[0];
 
       if (!exam) {
-        return res.status(
-          404
-        ).json({
+        return res.status(404).json({
           error:
             "Exam not found.",
         });
@@ -2273,8 +2045,7 @@ router.get(
           FROM exam_attempts at
 
           JOIN users u
-            ON u.id =
-               at.student_id
+            ON u.id = at.student_id
 
           WHERE at.exam_id = $1
 
@@ -2282,14 +2053,11 @@ router.get(
             at.submitted_at
               DESC NULLS LAST
           `,
-          [
-            exam.id,
-          ]
+          [exam.id]
         );
 
       return res.json({
         exam,
-
         results:
           result.rows,
       });
@@ -2299,9 +2067,7 @@ router.get(
         err.message
       );
 
-      return res.status(
-        500
-      ).json({
+      return res.status(500).json({
         error:
           "Could not fetch exam results.",
       });
@@ -2315,13 +2081,8 @@ router.get(
 
 router.put(
   "/exam-attempts/:id/score",
-  async (
-    req,
-    res
-  ) => {
-    const {
-      score,
-    } = req.body;
+  async (req, res) => {
+    const { score } = req.body;
 
     try {
       const result =
@@ -2335,14 +2096,11 @@ router.put(
           FROM exam_attempts at
 
           JOIN exams ex
-            ON ex.id =
-               at.exam_id
+            ON ex.id = at.exam_id
 
           WHERE at.id = $1
           `,
-          [
-            req.params.id,
-          ]
+          [req.params.id]
         );
 
       const attempt =
@@ -2350,16 +2108,10 @@ router.put(
 
       if (
         !attempt ||
-        Number(
-          attempt.faculty_id
-        ) !==
-          Number(
-            req.user.id
-          )
+        Number(attempt.faculty_id) !==
+          Number(req.user.id)
       ) {
-        return res.status(
-          404
-        ).json({
+        return res.status(404).json({
           error:
             "Attempt not found.",
         });
@@ -2371,19 +2123,13 @@ router.put(
         ) || 100;
 
       const parsedScore =
-        Number(
-          score
-        );
+        Number(score);
 
       if (
-        Number.isNaN(
-          parsedScore
-        ) ||
+        Number.isNaN(parsedScore) ||
         parsedScore < 0
       ) {
-        return res.status(
-          400
-        ).json({
+        return res.status(400).json({
           error:
             "Enter a valid score.",
         });
@@ -2404,8 +2150,7 @@ router.put(
 
         SET
           score = $1,
-          posted =
-            0::smallint
+          posted = 0::smallint
 
         WHERE id = $2
         `,
@@ -2417,10 +2162,8 @@ router.put(
 
       return res.json({
         success: true,
-
         message:
           "Score updated successfully.",
-
         score:
           finalScore,
       });
@@ -2430,9 +2173,7 @@ router.put(
         err.message
       );
 
-      return res.status(
-        500
-      ).json({
+      return res.status(500).json({
         error:
           "Could not update score.",
       });
@@ -2446,10 +2187,7 @@ router.put(
 
 router.post(
   "/exam-attempts/:id/post",
-  async (
-    req,
-    res
-  ) => {
+  async (req, res) => {
     try {
       const result =
         await db.query(
@@ -2461,14 +2199,11 @@ router.post(
           FROM exam_attempts at
 
           JOIN exams ex
-            ON ex.id =
-               at.exam_id
+            ON ex.id = at.exam_id
 
           WHERE at.id = $1
           `,
-          [
-            req.params.id,
-          ]
+          [req.params.id]
         );
 
       const attempt =
@@ -2476,30 +2211,20 @@ router.post(
 
       if (
         !attempt ||
-        Number(
-          attempt.faculty_id
-        ) !==
-          Number(
-            req.user.id
-          )
+        Number(attempt.faculty_id) !==
+          Number(req.user.id)
       ) {
-        return res.status(
-          404
-        ).json({
+        return res.status(404).json({
           error:
             "Attempt not found.",
         });
       }
 
       if (
-        attempt.score ===
-          null ||
-        attempt.score ===
-          undefined
+        attempt.score === null ||
+        attempt.score === undefined
       ) {
-        return res.status(
-          400
-        ).json({
+        return res.status(400).json({
           error:
             "Score the attempt before posting.",
         });
@@ -2510,19 +2235,15 @@ router.post(
         UPDATE exam_attempts
 
         SET
-          posted =
-            1::smallint
+          posted = 1::smallint
 
         WHERE id = $1
         `,
-        [
-          attempt.id,
-        ]
+        [attempt.id]
       );
 
       return res.json({
         success: true,
-
         message:
           "Result posted to student.",
       });
@@ -2532,9 +2253,7 @@ router.post(
         err.message
       );
 
-      return res.status(
-        500
-      ).json({
+      return res.status(500).json({
         error:
           "Could not post exam result.",
       });
