@@ -1,4 +1,5 @@
 // backend/routes/authRoutes.js
+
 require("dotenv").config();
 
 const express = require("express");
@@ -6,16 +7,22 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
 const db = require("../config/db");
-const { issueOtpPair, verifyOtp } = require("../utils/otp");
+const {
+  issueOtpPair,
+  verifyOtp,
+} = require("../utils/otp");
 
 const router = express.Router();
 
-// In-memory store for instant text captcha validation
+// ============================================================
+// CAPTCHA STORE
+// ============================================================
+
 const activeCaptchas = new Map();
 
-// Periodic cleanup of expired captchas
 setInterval(() => {
   const now = Date.now();
+
   for (const [id, record] of activeCaptchas.entries()) {
     if (record.expiresAt < now) {
       activeCaptchas.delete(id);
@@ -23,66 +30,157 @@ setInterval(() => {
   }
 }, 60 * 1000);
 
+// ============================================================
+// CAPTCHA VERIFICATION
+// ============================================================
+
 function verifyCaptchaLocal(captchaId, answer) {
-  if (!captchaId || !answer) return false;
+  if (!captchaId || !answer) {
+    return false;
+  }
+
   const record = activeCaptchas.get(captchaId);
-  if (!record) return false;
+
+  if (!record) {
+    return false;
+  }
+
   if (record.expiresAt < Date.now()) {
     activeCaptchas.delete(captchaId);
     return false;
   }
-  // Remove once verified to prevent replay
+
+  // Prevent replay
   activeCaptchas.delete(captchaId);
-  return record.answer.toLowerCase() === String(answer).trim().toLowerCase();
+
+  return (
+    record.answer.toLowerCase() ===
+    String(answer).trim().toLowerCase()
+  );
 }
+
+// ============================================================
+// DELETE UNVERIFIED USER
+// ============================================================
 
 async function deleteUnverifiedUser(userId) {
   try {
-    const [rows] = await db.query("SELECT id, is_active FROM users WHERE id = ?", [userId]);
-    const user = rows[0];
-    if (!user || user.is_active) return;
+    const result = await db.query(
+      `
+      SELECT id, is_active
+      FROM users
+      WHERE id = $1
+      `,
+      [userId]
+    );
 
-    await db.query("DELETE FROM student_profile WHERE user_id = ?", [userId]).catch(() => {});
-    await db.query("DELETE FROM faculty_profile WHERE user_id = ?", [userId]).catch(() => {});
-    await db.query("DELETE FROM otp_codes WHERE user_id = ?", [userId]).catch(() => {});
-    await db.query("DELETE FROM users WHERE id = ?", [userId]);
-    console.log(`Unverified registration ${userId} deleted.`);
-  } catch (error) {
-    console.error("Error deleting unverified user:", error.message || error);
+    const user = result.rows[0];
+
+    if (!user) {
+      return;
+    }
+
+    // PostgreSQL BOOLEAN
+    if (user.is_active === true) {
+      return;
+    }
+
+    await db.query(
+      `
+      DELETE FROM student_profile
+      WHERE user_id = $1
+      `,
+      [userId]
+    );
+
+    await db.query(
+      `
+      DELETE FROM faculty_profile
+      WHERE user_id = $1
+      `,
+      [userId]
+    );
+
+    await db.query(
+      `
+      DELETE FROM otp_codes
+      WHERE user_id = $1
+      `,
+      [userId]
+    );
+
+    await db.query(
+      `
+      DELETE FROM users
+      WHERE id = $1
+      `,
+      [userId]
+    );
+
+    console.log(
+      `Unverified registration ${userId} deleted.`
+    );
+  } catch (err) {
+    console.error(
+      "DELETE UNVERIFIED USER ERROR:",
+      err.message
+    );
   }
 }
 
-// CAPTCHA: Fast In-Memory Text Captcha
+// ============================================================
+// CAPTCHA
+// ============================================================
+
 router.get("/captcha", async (req, res) => {
   try {
-    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    const chars =
+      "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
     let text = "";
+
     for (let i = 0; i < 5; i++) {
-      text += chars.charAt(Math.floor(Math.random() * chars.length));
+      text += chars.charAt(
+        Math.floor(Math.random() * chars.length)
+      );
     }
 
-    const captchaId = Date.now().toString() + Math.random().toString(36).substring(2, 7);
-    const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes validity
+    const captchaId =
+      Date.now().toString() +
+      Math.random().toString(36).substring(2, 8);
+
+    const expiresAt =
+      Date.now() + 5 * 60 * 1000;
 
     activeCaptchas.set(captchaId, {
       answer: text,
-      expiresAt: expiresAt,
+      expiresAt,
     });
 
     res.json({
       captchaId,
       captchaText: text,
-      text: text,
+      text,
     });
-  } catch (e) {
-    console.error("CAPTCHA ERROR:", e.message || e);
-    res.status(500).json({ error: "Could not generate captcha." });
+  } catch (err) {
+    console.error(
+      "CAPTCHA ERROR:",
+      err.message
+    );
+
+    res.status(500).json({
+      error: "Could not generate captcha.",
+    });
   }
 });
 
-// REGISTER (Requires Email OTP & Password Confirmation)
+// ============================================================
+// REGISTER
+// ============================================================
+
 router.post("/register", async (req, res) => {
   let userId = null;
+
   try {
     const {
       role,
@@ -99,228 +197,720 @@ router.post("/register", async (req, res) => {
       slot = null,
     } = req.body;
 
+    // --------------------------------------------------------
+    // VALIDATION
+    // --------------------------------------------------------
+
     if (!["student", "faculty"].includes(role)) {
-      return res.status(400).json({ error: "Invalid role." });
-    }
-
-    if (!name || !username || !email || !password) {
-      return res.status(400).json({ error: "All required fields must be filled." });
-    }
-
-    if (password.length < 8) {
-      return res.status(400).json({ error: "Password must be at least 8 characters." });
-    }
-
-    if (confirmPassword && password !== confirmPassword) {
-      return res.status(400).json({ error: "Passwords do not match." });
-    }
-
-    const captchaValid = verifyCaptchaLocal(captchaId, captchaAnswer);
-    if (!captchaValid) {
-      return res.status(400).json({ error: "Captcha verification failed. Please try again." });
-    }
-
-    const [existsRows] = await db.query(
-      "SELECT id, is_active FROM users WHERE username = ? OR email = ? LIMIT 1",
-      [username.trim(), email.trim()]
-    );
-
-    if (existsRows.length > 0) {
-      const existingUser = existsRows[0];
-      if (existingUser.is_active) {
-        return res.status(409).json({ error: "Username or email already registered." });
-      }
-      await deleteUnverifiedUser(existingUser.id);
-    }
-
-    const hash = await bcrypt.hash(password, 10);
-
-    const [result] = await db.query(
-      `INSERT INTO users (role, name, username, email, password_hash, email_verified, is_active, branch, year, subject, slot)
-       VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)`,
-      [role, name.trim(), username.trim(), email.trim(), hash, branch, year, subject, slot]
-    );
-
-    userId = result.insertId;
-
-    if (role === "student") {
-      await db.query("INSERT INTO student_profile (user_id, branch, year) VALUES (?, ?, ?)", [
-        userId,
-        branch,
-        year,
-      ]).catch(() => {});
-    } else {
-      await db.query(
-        "INSERT INTO faculty_profile (user_id, branch, subject, slot) VALUES (?, ?, ?, ?)",
-        [userId, branch, subject, slot]
-      ).catch(() => {});
-    }
-
-    const [userRows] = await db.query("SELECT * FROM users WHERE id = ?", [userId]);
-    const user = userRows[0];
-
-    await issueOtpPair(user, "register");
-
-    res.json({
-      message: "Registration successful. OTP sent to your email.",
-      userId: userId,
-      needsVerification: true,
-    });
-  } catch (e) {
-    console.error("REGISTRATION ERROR:", e.message || e);
-    if (userId) await deleteUnverifiedUser(userId);
-    res.status(500).json({ error: "Registration failed." });
-  }
-});
-
-// VERIFY REGISTRATION OTP
-router.post("/verify-registration", async (req, res) => {
-  const { userId, emailOtp, otp } = req.body;
-  const codeToVerify = emailOtp || otp;
-
-  try {
-    const [rows] = await db.query("SELECT * FROM users WHERE id = ?", [userId]);
-    const user = rows[0];
-
-    if (!user) return res.status(404).json({ error: "Registration not found." });
-    if (user.is_active) return res.status(400).json({ error: "Account already verified." });
-
-    const check = await verifyOtp(userId, "register", "email", codeToVerify);
-    if (!check.ok) {
-      return res.status(400).json({ error: check.reason });
-    }
-
-    await db.query("UPDATE users SET email_verified = 1, is_active = 1 WHERE id = ?", [userId]);
-
-    res.json({ message: "Account verified. You can now login.", verified: true });
-  } catch (e) {
-    console.error("VERIFY REGISTRATION ERROR:", e.message || e);
-    res.status(500).json({ error: "Verification failed." });
-  }
-});
-
-// RESEND REGISTRATION OTP
-router.post("/resend-otp", async (req, res) => {
-  try {
-    const { userId, purpose } = req.body;
-    const [rows] = await db.query("SELECT * FROM users WHERE id = ?", [userId]);
-    const user = rows[0];
-
-    if (!user) return res.status(404).json({ error: "Account not found." });
-
-    await issueOtpPair(user, purpose || "register");
-    res.json({ message: "OTP resent to your email." });
-  } catch (e) {
-    console.error("RESEND OTP ERROR:", e.message || e);
-    res.status(500).json({ error: "Could not resend OTP." });
-  }
-});
-
-// DIRECT LOGIN (NO OTP)
-router.post("/login", async (req, res) => {
-  try {
-    const { role, usernameOrEmail, password, captchaId, captchaAnswer } = req.body;
-
-    const captchaValid = verifyCaptchaLocal(captchaId, captchaAnswer);
-    if (!captchaValid) {
-      return res.status(400).json({ error: "Captcha verification failed. Please try again." });
-    }
-
-    const [rows] = await db.query(
-      "SELECT * FROM users WHERE role = ? AND (username = ? OR email = ?)",
-      [role, usernameOrEmail.trim(), usernameOrEmail.trim()]
-    );
-    const user = rows[0];
-
-    if (!user) return res.status(401).json({ error: "Invalid credentials." });
-
-    const match = await bcrypt.compare(password, user.password_hash);
-    if (!match) return res.status(401).json({ error: "Invalid credentials." });
-
-    if (!user.is_active) {
-      await issueOtpPair(user, "register");
-      return res.status(403).json({
-        error: "Account not verified. A verification code has been sent to your email.",
-        needsVerification: true,
-        userId: user.id,
+      return res.status(400).json({
+        error: "Invalid role.",
       });
     }
 
-    const token = jwt.sign(
-      { id: user.id, role: user.role, username: user.username, name: user.name },
-      process.env.JWT_SECRET || "super_secret_jwt_key_autotrack_ai_2026",
-      { expiresIn: process.env.JWT_EXPIRES_IN || "7d" }
+    if (!name || !username || !email || !password) {
+      return res.status(400).json({
+        error: "All required fields must be filled.",
+      });
+    }
+
+    if (password.length < 8) {
+      return res.status(400).json({
+        error: "Password must be at least 8 characters.",
+      });
+    }
+
+    if (!confirmPassword || password !== confirmPassword) {
+      return res.status(400).json({
+        error: "Passwords do not match.",
+      });
+    }
+
+    // --------------------------------------------------------
+    // CAPTCHA
+    // --------------------------------------------------------
+
+    if (!verifyCaptchaLocal(captchaId, captchaAnswer)) {
+      return res.status(400).json({
+        error:
+          "Captcha verification failed. Please try again.",
+      });
+    }
+
+    const cleanName = name.trim();
+    const cleanUsername = username.trim();
+    const cleanEmail = email.trim().toLowerCase();
+
+    // --------------------------------------------------------
+    // CHECK EXISTING USER
+    // --------------------------------------------------------
+
+    const existingResult = await db.query(
+      `
+      SELECT id, is_active
+      FROM users
+      WHERE username = $1
+         OR LOWER(email) = $2
+      LIMIT 1
+      `,
+      [cleanUsername, cleanEmail]
+    );
+
+    if (existingResult.rows.length > 0) {
+      const existingUser = existingResult.rows[0];
+
+      // PostgreSQL BOOLEAN
+      if (existingUser.is_active === true) {
+        return res.status(409).json({
+          error:
+            "Username or email already registered.",
+        });
+      }
+
+      await deleteUnverifiedUser(existingUser.id);
+    }
+
+    // --------------------------------------------------------
+    // HASH PASSWORD
+    // --------------------------------------------------------
+
+    const passwordHash = await bcrypt.hash(
+      password,
+      12
+    );
+
+    // --------------------------------------------------------
+    // INSERT USER
+    // IMPORTANT:
+    // PostgreSQL uses TRUE/FALSE, not 1/0.
+    // --------------------------------------------------------
+
+    const insertResult = await db.query(
+      `
+      INSERT INTO users
+      (
+        name,
+        username,
+        email,
+        password,
+        role,
+        email_verified,
+        is_active,
+        branch,
+        year,
+        subject,
+        slot
+      )
+      VALUES
+      (
+        $1,
+        $2,
+        $3,
+        $4,
+        $5,
+        FALSE,
+        FALSE,
+        $6,
+        $7,
+        $8,
+        $9
+      )
+      RETURNING id
+      `,
+      [
+        cleanName,
+        cleanUsername,
+        cleanEmail,
+        passwordHash,
+        role,
+        branch,
+        year,
+        subject,
+        slot,
+      ]
+    );
+
+    userId = insertResult.rows[0].id;
+
+    // --------------------------------------------------------
+    // STUDENT PROFILE
+    // --------------------------------------------------------
+
+    if (role === "student") {
+      await db.query(
+        `
+        INSERT INTO student_profile
+        (
+          user_id,
+          branch,
+          year
+        )
+        VALUES
+        (
+          $1,
+          $2,
+          $3
+        )
+        `,
+        [
+          userId,
+          branch,
+          year,
+        ]
+      );
+    }
+
+    // --------------------------------------------------------
+    // FACULTY PROFILE
+    // --------------------------------------------------------
+
+    if (role === "faculty") {
+      await db.query(
+        `
+        INSERT INTO faculty_profile
+        (
+          user_id,
+          branch,
+          subject,
+          slot
+        )
+        VALUES
+        (
+          $1,
+          $2,
+          $3,
+          $4
+        )
+        `,
+        [
+          userId,
+          branch,
+          subject,
+          slot,
+        ]
+      );
+    }
+
+    // --------------------------------------------------------
+    // GET USER
+    // --------------------------------------------------------
+
+    const userResult = await db.query(
+      `
+      SELECT *
+      FROM users
+      WHERE id = $1
+      `,
+      [userId]
+    );
+
+    const user = userResult.rows[0];
+
+    // --------------------------------------------------------
+    // SEND REGISTRATION OTP
+    // --------------------------------------------------------
+
+    await issueOtpPair(
+      user,
+      "register"
     );
 
     res.json({
-      token,
-      user: {
-        id: user.id,
-        role: user.role,
-        username: user.username,
-        name: user.name,
-        email: user.email,
-      },
+      message:
+        "Registration successful. OTP sent to your email.",
+      userId,
+      needsVerification: true,
     });
-  } catch (e) {
-    console.error("LOGIN ERROR:", e.message || e);
-    res.status(500).json({ error: "Login failed." });
-  }
-});
 
-// FORGOT PASSWORD - STEP 1: SEND RESET OTP
-router.post("/forgot-password", async (req, res) => {
-  try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ error: "Email is required." });
+  } catch (err) {
+    console.error(
+      "REGISTRATION ERROR:",
+      err.message
+    );
 
-    const [rows] = await db.query("SELECT * FROM users WHERE email = ? AND is_active = 1", [
-      email.trim(),
-    ]);
-    const user = rows[0];
-
-    if (!user) {
-      return res.status(404).json({ error: "No active account found with this email." });
+    if (userId) {
+      await deleteUnverifiedUser(userId);
     }
 
-    await issueOtpPair(user, "reset_password");
-
-    res.json({
-      message: "Password reset OTP sent to your email.",
-      userId: user.id,
+    res.status(500).json({
+      error:
+        "Registration failed: " + err.message,
     });
-  } catch (e) {
-    console.error("FORGOT PASSWORD ERROR:", e.message || e);
-    res.status(500).json({ error: "Could not initiate password reset." });
   }
 });
 
-// FORGOT PASSWORD - STEP 2: VERIFY OTP AND UPDATE PASSWORD
-router.post("/reset-password", async (req, res) => {
-  try {
-    const { userId, otp, newPassword } = req.body;
+// ============================================================
+// VERIFY REGISTRATION OTP
+// ============================================================
 
-    if (!userId || !otp || !newPassword) {
-      return res.status(400).json({ error: "All fields are required." });
+router.post(
+  "/verify-registration",
+  async (req, res) => {
+    try {
+      const {
+        userId,
+        emailOtp,
+        otp,
+      } = req.body;
+
+      const code = emailOtp || otp;
+
+      if (!userId || !code) {
+        return res.status(400).json({
+          error:
+            "User ID and OTP are required.",
+        });
+      }
+
+      const result = await db.query(
+        `
+        SELECT *
+        FROM users
+        WHERE id = $1
+        `,
+        [userId]
+      );
+
+      const user = result.rows[0];
+
+      if (!user) {
+        return res.status(404).json({
+          error:
+            "Registration not found.",
+        });
+      }
+
+      // PostgreSQL BOOLEAN
+      if (user.is_active === true) {
+        return res.status(400).json({
+          error:
+            "Account already verified.",
+        });
+      }
+
+      const check = await verifyOtp(
+        userId,
+        "register",
+        "email",
+        code
+      );
+
+      if (!check.ok) {
+        return res.status(400).json({
+          error: check.reason,
+        });
+      }
+
+      await db.query(
+        `
+        UPDATE users
+        SET
+          email_verified = TRUE,
+          is_active = TRUE,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+        `,
+        [userId]
+      );
+
+      res.json({
+        message:
+          "Account verified. You can now login.",
+        verified: true,
+      });
+
+    } catch (err) {
+      console.error(
+        "VERIFY REGISTRATION ERROR:",
+        err.message
+      );
+
+      res.status(500).json({
+        error:
+          "Verification failed.",
+      });
     }
-
-    if (newPassword.length < 8) {
-      return res.status(400).json({ error: "Password must be at least 8 characters." });
-    }
-
-    const check = await verifyOtp(userId, "reset_password", "email", otp);
-    if (!check.ok) {
-      return res.status(400).json({ error: check.reason });
-    }
-
-    const newHash = await bcrypt.hash(newPassword, 10);
-    await db.query("UPDATE users SET password_hash = ? WHERE id = ?", [newHash, userId]);
-
-    res.json({ message: "Password reset successful. You can now login with your new password." });
-  } catch (e) {
-    console.error("RESET PASSWORD ERROR:", e.message || e);
-    res.status(500).json({ error: "Failed to reset password." });
   }
-});
+);
+
+// ============================================================
+// RESEND OTP
+// ============================================================
+
+router.post(
+  "/resend-otp",
+  async (req, res) => {
+    try {
+      const {
+        userId,
+        purpose = "register",
+      } = req.body;
+
+      if (!userId) {
+        return res.status(400).json({
+          error:
+            "User ID is required.",
+        });
+      }
+
+      const result = await db.query(
+        `
+        SELECT *
+        FROM users
+        WHERE id = $1
+        `,
+        [userId]
+      );
+
+      const user = result.rows[0];
+
+      if (!user) {
+        return res.status(404).json({
+          error:
+            "Account not found.",
+        });
+      }
+
+      await issueOtpPair(
+        user,
+        purpose
+      );
+
+      res.json({
+        message:
+          "OTP resent to your email.",
+      });
+
+    } catch (err) {
+      console.error(
+        "RESEND OTP ERROR:",
+        err.message
+      );
+
+      res.status(500).json({
+        error:
+          "Could not resend OTP.",
+      });
+    }
+  }
+);
+
+// ============================================================
+// LOGIN
+// ============================================================
+
+router.post(
+  "/login",
+  async (req, res) => {
+    try {
+      const {
+        role,
+        usernameOrEmail,
+        password,
+        captchaId,
+        captchaAnswer,
+      } = req.body;
+
+      if (
+        !role ||
+        !usernameOrEmail ||
+        !password
+      ) {
+        return res.status(400).json({
+          error:
+            "Role, username/email and password are required.",
+        });
+      }
+
+      // ------------------------------------------------------
+      // CAPTCHA
+      // ------------------------------------------------------
+
+      if (!verifyCaptchaLocal(
+        captchaId,
+        captchaAnswer
+      )) {
+        return res.status(400).json({
+          error:
+            "Captcha verification failed. Please try again.",
+        });
+      }
+
+      const loginValue =
+        usernameOrEmail.trim().toLowerCase();
+
+      // ------------------------------------------------------
+      // FIND USER
+      // ------------------------------------------------------
+
+      const result = await db.query(
+        `
+        SELECT *
+        FROM users
+        WHERE role = $1
+          AND
+          (
+            LOWER(username) = $2
+            OR LOWER(email) = $2
+          )
+        LIMIT 1
+        `,
+        [
+          role,
+          loginValue,
+        ]
+      );
+
+      const user = result.rows[0];
+
+      if (!user) {
+        return res.status(401).json({
+          error:
+            "Invalid credentials.",
+        });
+      }
+
+      // ------------------------------------------------------
+      // PASSWORD
+      // ------------------------------------------------------
+
+      const passwordMatches =
+        await bcrypt.compare(
+          password,
+          user.password
+        );
+
+      if (!passwordMatches) {
+        return res.status(401).json({
+          error:
+            "Invalid credentials.",
+        });
+      }
+
+      // ------------------------------------------------------
+      // EMAIL VERIFICATION
+      // PostgreSQL BOOLEAN
+      // ------------------------------------------------------
+
+      if (user.is_active !== true) {
+        await issueOtpPair(
+          user,
+          "register"
+        );
+
+        return res.status(403).json({
+          error:
+            "Account not verified. A verification code has been sent to your email.",
+          needsVerification: true,
+          userId: user.id,
+        });
+      }
+
+      // ------------------------------------------------------
+      // JWT
+      // ------------------------------------------------------
+
+      if (!process.env.JWT_SECRET) {
+        console.error(
+          "JWT_SECRET is missing from .env"
+        );
+
+        return res.status(500).json({
+          error:
+            "Server authentication configuration is missing.",
+        });
+      }
+
+      const token = jwt.sign(
+        {
+          id: user.id,
+          role: user.role,
+          username: user.username,
+          name: user.name,
+        },
+        process.env.JWT_SECRET,
+        {
+          expiresIn:
+            process.env.JWT_EXPIRES_IN || "7d",
+        }
+      );
+
+      res.json({
+        token,
+        user: {
+          id: user.id,
+          role: user.role,
+          username: user.username,
+          name: user.name,
+          email: user.email,
+        },
+      });
+
+    } catch (err) {
+      console.error(
+        "LOGIN ERROR:",
+        err.message
+      );
+
+      res.status(500).json({
+        error:
+          "Login failed: " + err.message,
+      });
+    }
+  }
+);
+
+// ============================================================
+// FORGOT PASSWORD
+// ============================================================
+
+router.post(
+  "/forgot-password",
+  async (req, res) => {
+    try {
+      const { email } = req.body;
+
+      if (!email) {
+        return res.status(400).json({
+          error:
+            "Email is required.",
+        });
+      }
+
+      const cleanEmail =
+        email.trim().toLowerCase();
+
+      const result = await db.query(
+        `
+        SELECT *
+        FROM users
+        WHERE LOWER(email) = $1
+          AND is_active = TRUE
+        LIMIT 1
+        `,
+        [cleanEmail]
+      );
+
+      const user = result.rows[0];
+
+      if (!user) {
+        return res.status(404).json({
+          error:
+            "No active account found with this email.",
+        });
+      }
+
+      await issueOtpPair(
+        user,
+        "reset_password"
+      );
+
+      res.json({
+        message:
+          "Password reset OTP sent to your email.",
+        userId: user.id,
+      });
+
+    } catch (err) {
+      console.error(
+        "FORGOT PASSWORD ERROR:",
+        err.message
+      );
+
+      res.status(500).json({
+        error:
+          "Could not initiate password reset.",
+      });
+    }
+  }
+);
+
+// ============================================================
+// RESET PASSWORD
+// ============================================================
+
+router.post(
+  "/reset-password",
+  async (req, res) => {
+    try {
+      const {
+        userId,
+        otp,
+        newPassword,
+      } = req.body;
+
+      if (
+        !userId ||
+        !otp ||
+        !newPassword
+      ) {
+        return res.status(400).json({
+          error:
+            "All fields are required.",
+        });
+      }
+
+      if (newPassword.length < 8) {
+        return res.status(400).json({
+          error:
+            "Password must be at least 8 characters.",
+        });
+      }
+
+      const check = await verifyOtp(
+        userId,
+        "reset_password",
+        "email",
+        otp
+      );
+
+      if (!check.ok) {
+        return res.status(400).json({
+          error:
+            check.reason,
+        });
+      }
+
+      const newPasswordHash =
+        await bcrypt.hash(
+          newPassword,
+          12
+        );
+
+      await db.query(
+        `
+        UPDATE users
+        SET
+          password = $1,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = $2
+        `,
+        [
+          newPasswordHash,
+          userId,
+        ]
+      );
+
+      res.json({
+        message:
+          "Password reset successful. You can now login with your new password.",
+      });
+
+    } catch (err) {
+      console.error(
+        "RESET PASSWORD ERROR:",
+        err.message
+      );
+
+      res.status(500).json({
+        error:
+          "Failed to reset password.",
+      });
+    }
+  }
+);
+
+// ============================================================
+// EXPORT
+// ============================================================
 
 module.exports = router;

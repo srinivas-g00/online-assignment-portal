@@ -6,3 +6,14 @@ uploads/
 *.sql
 assignment_portal_backup.sql
 "@ | Set-Content .gitignore
+
+node_modules/
+.env
+.env.*
+!.env.example
+
+backend/uploads/
+*.log
+
+.DS_Store
+Thumbs.db

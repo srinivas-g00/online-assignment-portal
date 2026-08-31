@@ -1,82 +1,203 @@
 // backend/utils/otp.js
+
 const db = require("../config/db");
 const { sendOtpEmail } = require("./mailer");
 
+// ============================================================
+// GENERATE 6 DIGIT OTP
+// ============================================================
+
 function genCode() {
-  return String(Math.floor(100000 + Math.random() * 900000));
+  return String(
+    Math.floor(100000 + Math.random() * 900000)
+  );
 }
 
-/** Creates and dispatches an Email OTP. */
+// ============================================================
+// ISSUE OTP
+// ============================================================
+
 async function issueOtpPair(user, purpose = "register") {
   if (!user || !user.id || !user.email) {
-    throw new Error("Valid user object with id and email is required to issue an OTP.");
+    throw new Error(
+      "Valid user object with id and email is required to issue an OTP."
+    );
   }
 
   const emailCode = genCode();
 
-  // Invalidate any previous unused OTPs for this user and purpose
+  // Invalidate previous OTPs
+  // IMPORTANT: consumed is PostgreSQL BOOLEAN
   await db.query(
-    "UPDATE otp_codes SET used = 1, is_used = 1 WHERE user_id = ? AND purpose = ? AND used = 0",
+    `
+    UPDATE otp_codes
+    SET consumed = TRUE
+    WHERE user_id = $1
+      AND purpose = $2
+      AND channel = 'email'
+      AND consumed = FALSE
+    `,
     [user.id, purpose]
   );
 
-  // Insert fresh OTP using MySQL native 10-minute expiry
+  // Create new OTP
   await db.query(
-    `INSERT INTO otp_codes (user_id, purpose, channel, code, target, used, is_used, expires_at) 
-     VALUES (?, ?, 'email', ?, ?, 0, 0, DATE_ADD(NOW(), INTERVAL 10 MINUTE))`,
-    [user.id, purpose, emailCode, user.email]
+    `
+    INSERT INTO otp_codes
+    (
+      user_id,
+      purpose,
+      channel,
+      code,
+      expires_at,
+      consumed
+    )
+    VALUES
+    (
+      $1,
+      $2,
+      'email',
+      $3,
+      CURRENT_TIMESTAMP + INTERVAL '10 minutes',
+      FALSE
+    )
+    `,
+    [
+      user.id,
+      purpose,
+      emailCode,
+    ]
   );
 
-  await sendOtpEmail(user.email, emailCode, purpose);
+  // Send email
+  await sendOtpEmail(
+    user.email,
+    emailCode,
+    purpose
+  );
 
-  return { success: true };
+  console.log(
+    `[OTP] OTP sent to ${user.email} for ${purpose}`
+  );
+
+  return {
+    success: true,
+  };
 }
 
-/** Verifies the Email OTP code. */
-async function verifyOtp(userId, purpose, channel = "email", code) {
+// ============================================================
+// VERIFY OTP
+// ============================================================
+
+async function verifyOtp(
+  userId,
+  purpose,
+  channel = "email",
+  code
+) {
   if (!userId || !code) {
-    return { ok: false, reason: "User ID and OTP code are required." };
+    return {
+      ok: false,
+      reason:
+        "User ID and OTP code are required.",
+    };
   }
 
   try {
-    const [rows] = await db.query(
-      `SELECT * FROM otp_codes 
-       WHERE user_id = ? AND purpose = ? AND channel = ? AND used = 0 AND is_used = 0 
-       ORDER BY id DESC LIMIT 1`,
-      [userId, purpose, channel]
+    const result = await db.query(
+      `
+      SELECT *
+      FROM otp_codes
+      WHERE user_id = $1
+        AND purpose = $2
+        AND channel = $3
+        AND consumed = FALSE
+      ORDER BY id DESC
+      LIMIT 1
+      `,
+      [
+        userId,
+        purpose,
+        channel,
+      ]
     );
 
-    const row = rows[0];
+    const row = result.rows[0];
+
     if (!row) {
-      return { ok: false, reason: "No active verification code found." };
+      return {
+        ok: false,
+        reason:
+          "No active verification code found.",
+      };
     }
 
-    // Verify code characters
-    if (row.code.trim() !== String(code).trim()) {
-      return { ok: false, reason: "Incorrect OTP code. Please check and try again." };
+    // Check OTP
+    if (
+      String(row.code).trim() !==
+      String(code).trim()
+    ) {
+      return {
+        ok: false,
+        reason:
+          "Incorrect OTP code. Please check and try again.",
+      };
     }
 
-    // Verify expiration against MySQL server timestamp
-    const [expCheck] = await db.query(
-      "SELECT id FROM otp_codes WHERE id = ? AND expires_at >= NOW()",
+    // Check expiry
+    const expiryResult = await db.query(
+      `
+      SELECT id
+      FROM otp_codes
+      WHERE id = $1
+        AND expires_at >= CURRENT_TIMESTAMP
+        AND consumed = FALSE
+      `,
       [row.id]
     );
 
-    if (!expCheck || expCheck.length === 0) {
-      return { ok: false, reason: "OTP has expired. Click 'Resend Code' for a new one." };
+    if (expiryResult.rows.length === 0) {
+      return {
+        ok: false,
+        reason:
+          "OTP has expired. Click 'Resend Code' for a new one.",
+      };
     }
 
-    // Mark as consumed
-    await db.query("UPDATE otp_codes SET used = 1, is_used = 1 WHERE id = ?", [row.id]);
-    return { ok: true };
+    // Consume OTP
+    await db.query(
+      `
+      UPDATE otp_codes
+      SET consumed = TRUE
+      WHERE id = $1
+      `,
+      [row.id]
+    );
+
+    return {
+      ok: true,
+    };
+
   } catch (err) {
-    console.error("verifyOtp error:", err.message || err);
-    return { ok: false, reason: "Database error during OTP verification." };
+    console.error(
+      "VERIFY OTP ERROR:",
+      err.message
+    );
+
+    return {
+      ok: false,
+      reason:
+        "Database error during OTP verification.",
+    };
   }
 }
 
-module.exports = { 
-  issueOtpPair, 
-  verifyOtp, 
-  genCode 
+// ============================================================
+// EXPORT
+// ============================================================
+
+module.exports = {
+  issueOtpPair,
+  verifyOtp,
+  genCode,
 };
