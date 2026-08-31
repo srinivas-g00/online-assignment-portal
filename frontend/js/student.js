@@ -7,8 +7,247 @@
 
   if (!user) return;
 
-  const $ = (id) =>
-    document.getElementById(id);
+  const $ = (id) => document.getElementById(id);
+
+  // ============================================================
+  // GET AUTH TOKEN
+  // ============================================================
+
+  function getAuthToken() {
+    try {
+      if (typeof getToken === "function") {
+        return getToken();
+      }
+
+      return (
+        localStorage.getItem("oa_token") ||
+        sessionStorage.getItem("oa_token") ||
+        ""
+      );
+    } catch {
+      return "";
+    }
+  }
+
+  // ============================================================
+  // GET API BASE
+  // ============================================================
+
+  function getApiBase() {
+    return (
+      window.API_BASE ||
+      window.location.origin
+    );
+  }
+
+  // ============================================================
+  // OPEN PROTECTED FILE
+  // ============================================================
+
+  async function openProtectedFile(
+    url,
+    fileName = "document"
+  ) {
+    const token =
+      getAuthToken();
+
+    if (!token) {
+      notice(
+        "Session expired",
+        "Please log in again.",
+        "err"
+      );
+      return;
+    }
+
+    let blobUrl = null;
+
+    try {
+      const response =
+        await fetch(
+          url,
+          {
+            method: "GET",
+
+            headers: {
+              Authorization:
+                "Bearer " + token,
+              Accept: "*/*",
+            },
+
+            credentials:
+              "same-origin",
+
+            cache: "no-store",
+          }
+        );
+
+      if (!response.ok) {
+        let message =
+          `Request failed (${response.status})`;
+
+        try {
+          const contentType =
+            response.headers.get(
+              "content-type"
+            ) || "";
+
+          if (
+            contentType.includes(
+              "application/json"
+            )
+          ) {
+            const data =
+              await response.json();
+
+            message =
+              data.error ||
+              data.message ||
+              message;
+          } else {
+            const text =
+              await response.text();
+
+            if (text) {
+              message = text;
+            }
+          }
+        } catch {
+          // Keep default message.
+        }
+
+        throw new Error(
+          message
+        );
+      }
+
+      const blob =
+        await response.blob();
+
+      if (
+        !blob ||
+        !blob.size
+      ) {
+        throw new Error(
+          "The file returned by the server is empty."
+        );
+      }
+
+      blobUrl =
+        URL.createObjectURL(
+          blob
+        );
+
+      const mimeType =
+        blob.type ||
+        response.headers.get(
+          "content-type"
+        ) ||
+        "";
+
+      const canPreview =
+        mimeType.startsWith(
+          "application/pdf"
+        ) ||
+        mimeType.startsWith(
+          "image/"
+        ) ||
+        mimeType.startsWith(
+          "text/"
+        );
+
+      if (canPreview) {
+        const newWindow =
+          window.open(
+            blobUrl,
+            "_blank"
+          );
+
+        if (!newWindow) {
+          const link =
+            document.createElement(
+              "a"
+            );
+
+          link.href =
+            blobUrl;
+
+          link.download =
+            fileName ||
+            "document";
+
+          document.body.appendChild(
+            link
+          );
+
+          link.click();
+
+          link.remove();
+
+          notice(
+            "Download started",
+            "Your browser blocked the preview, so the file download was started."
+          );
+        }
+      } else {
+        const link =
+          document.createElement(
+            "a"
+          );
+
+        link.href =
+          blobUrl;
+
+        link.download =
+          fileName ||
+          "document";
+
+        document.body.appendChild(
+          link
+        );
+
+        link.click();
+
+        link.remove();
+
+        notice(
+          "Download started",
+          `${fileName || "File"} is being downloaded.`
+        );
+      }
+
+      setTimeout(
+        () => {
+          if (blobUrl) {
+            URL.revokeObjectURL(
+              blobUrl
+            );
+          }
+        },
+        60000
+      );
+
+      blobUrl = null;
+    } catch (err) {
+      console.error(
+        "OPEN PROTECTED FILE ERROR:",
+        err
+      );
+
+      if (blobUrl) {
+        URL.revokeObjectURL(
+          blobUrl
+        );
+      }
+
+      notice(
+        "Could not open file",
+        err.message ||
+          "The requested file could not be opened.",
+        "err"
+      );
+    }
+  }
 
   // ============================================================
   // TABS
@@ -21,10 +260,14 @@
         document
           .querySelectorAll(".tabs button")
           .forEach((b) =>
-            b.classList.remove("active")
+            b.classList.remove(
+              "active"
+            )
           );
 
-        btn.classList.add("active");
+        btn.classList.add(
+          "active"
+        );
 
         [
           "faculties",
@@ -57,6 +300,13 @@
           $("facultyDetailWrap").classList.add(
             "hidden"
           );
+        }
+
+        if (
+          btn.dataset.tab ===
+          "faculties"
+        ) {
+          loadFaculties();
         }
 
         if (
@@ -624,20 +874,19 @@
                 "
               >
 
-                <a
-                  href="/api/student/assignments/${encodeURIComponent(
+                <button
+                  class="btn secondary"
+                  data-view-question="${escapeHtml(
                     a.id
-                  )}/question-paper"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style="
-                    color:#4f46e5;
-                    font-weight:600;
-                    text-decoration:underline;
-                  "
+                  )}"
+                  data-question-name="${escapeHtml(
+                    a.question_original ||
+                    "question-paper"
+                  )}"
+                  type="button"
                 >
                   📄 View question paper
-                </a>
+                </button>
 
               </div>
             `
@@ -670,24 +919,33 @@
                     Your Submission:
                   </strong>
 
-                  <a
-                    href="/api/student/submissions/${encodeURIComponent(
+                  <button
+                    class="btn secondary"
+                    data-view-own-submission="${escapeHtml(
                       a.submission_id
-                    )}/file"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style="
-                      color:#4f46e5;
-                      text-decoration:underline;
-                      font-weight:600;
-                    "
-                  >
-                    📄
-                    ${escapeHtml(
+                    )}"
+                    data-own-file-name="${escapeHtml(
                       subDisplayName
-                    )}
-                  </a>
+                    )}"
+                    type="button"
+                    style="margin-left:8px;"
+                  >
+                    📄 View / Download
+                  </button>
 
+                </p>
+
+                <p
+                  class="note"
+                  style="
+                    margin:0 0 6px 0;
+                    word-break:break-word;
+                  "
+                >
+                  File:
+                  ${escapeHtml(
+                    subDisplayName
+                  )}
                 </p>
 
                 <p
@@ -727,6 +985,15 @@
                             a.total_marks
                           )}
                         </b>
+
+                        <span
+                          style="
+                            color:#166534;
+                            margin-left:6px;
+                          "
+                        >
+                          Result posted
+                        </span>
                       `
                       : hasMarks
                       ? `
@@ -751,7 +1018,6 @@
                           not posted yet
                         </em>
                       `
-
                   }
 
                 </p>
@@ -835,11 +1101,100 @@
 
   function bindAssignment(a) {
 
+    // ----------------------------------------------------------
+    // VIEW QUESTION PAPER
+    // ----------------------------------------------------------
+
+    const questionBtn =
+      findButtonByData(
+        "view-question",
+        a.id
+      );
+
+    if (questionBtn) {
+      questionBtn.onclick =
+        async () => {
+          const originalText =
+            questionBtn.textContent;
+
+          questionBtn.disabled =
+            true;
+
+          questionBtn.textContent =
+            "Opening...";
+
+          try {
+            const url =
+              `${getApiBase()}/api/student/assignments/${encodeURIComponent(
+                a.id
+              )}/question-paper`;
+
+            await openProtectedFile(
+              url,
+              a.question_original ||
+                "question-paper"
+            );
+          } finally {
+            questionBtn.disabled =
+              false;
+
+            questionBtn.textContent =
+              originalText;
+          }
+        };
+    }
+
+    // ----------------------------------------------------------
+    // VIEW OWN SUBMISSION
+    // ----------------------------------------------------------
+
+    const ownSubmissionBtn =
+      findButtonByData(
+        "view-own-submission",
+        a.submission_id
+      );
+
+    if (ownSubmissionBtn) {
+      ownSubmissionBtn.onclick =
+        async () => {
+          const originalText =
+            ownSubmissionBtn.textContent;
+
+          ownSubmissionBtn.disabled =
+            true;
+
+          ownSubmissionBtn.textContent =
+            "Opening...";
+
+          try {
+            const url =
+              `${getApiBase()}/api/student/submissions/${encodeURIComponent(
+                a.submission_id
+              )}/file`;
+
+            await openProtectedFile(
+              url,
+              a.file_original ||
+                "student-submission"
+            );
+          } finally {
+            ownSubmissionBtn.disabled =
+              false;
+
+            ownSubmissionBtn.textContent =
+              originalText;
+          }
+        };
+    }
+
+    // ----------------------------------------------------------
+    // SUBMIT ASSIGNMENT
+    // ----------------------------------------------------------
+
     const submitBtn =
-      document.querySelector(
-        `[data-submit="${CSS.escape(
-          String(a.id)
-        )}"]`
+      findButtonByData(
+        "submit",
+        a.id
       );
 
     if (submitBtn) {
@@ -888,6 +1243,12 @@
 
           try {
 
+            submitBtn.disabled =
+              true;
+
+            submitBtn.textContent =
+              "Uploading...";
+
             await api(
               `/api/student/assignments/${encodeURIComponent(
                 a.id
@@ -895,8 +1256,10 @@
               {
                 method:
                   "POST",
+
                 isForm:
                   true,
+
                 body:
                   fd,
               }
@@ -919,15 +1282,24 @@
                 "Could not submit the assignment.",
               "err"
             );
+
+            submitBtn.disabled =
+              false;
+
+            submitBtn.textContent =
+              "Submit answer";
           }
         };
     }
 
+    // ----------------------------------------------------------
+    // MODIFY SUBMISSION
+    // ----------------------------------------------------------
+
     const modifyBtn =
-      document.querySelector(
-        `[data-modify="${CSS.escape(
-          String(a.id)
-        )}"]`
+      findButtonByData(
+        "modify",
+        a.id
       );
 
     if (modifyBtn) {
@@ -937,6 +1309,38 @@
             a
           );
     }
+  }
+
+  // ============================================================
+  // SAFE DATA ATTRIBUTE BUTTON SEARCH
+  // ============================================================
+
+  function findButtonByData(
+    attribute,
+    value
+  ) {
+    const buttons =
+      document.querySelectorAll(
+        `[data-${attribute}]`
+      );
+
+    for (
+      const button
+      of buttons
+    ) {
+      if (
+        String(
+          button.dataset[
+            attribute
+          ]
+        ) ===
+        String(value)
+      ) {
+        return button;
+      }
+    }
+
+    return null;
   }
 
   // ============================================================
@@ -982,7 +1386,7 @@
         >
 
           <label>
-            New file (max 5MB, any type)
+            New file (max 5MB)
           </label>
 
           <input
@@ -1073,7 +1477,6 @@
         );
 
         if (!file) {
-
           errBox.textContent =
             "Choose a replacement file.";
 
@@ -1090,7 +1493,6 @@
             1024 *
             1024
         ) {
-
           errBox.textContent =
             "Maximum allowed file size is 5MB.";
 
@@ -1112,7 +1514,6 @@
             : "";
 
         if (!emailOtp) {
-
           errBox.textContent =
             "Please enter the OTP code.";
 
@@ -1128,7 +1529,6 @@
             emailOtp
           )
         ) {
-
           errBox.textContent =
             "OTP must contain exactly 6 digits.";
 
@@ -1154,6 +1554,12 @@
 
         try {
 
+          confirmBtn.disabled =
+            true;
+
+          confirmBtn.textContent =
+            "Replacing...";
+
           await api(
             `/api/student/submissions/${encodeURIComponent(
               a.submission_id
@@ -1161,8 +1567,10 @@
             {
               method:
                 "POST",
+
               isForm:
                 true,
+
               body:
                 fd,
             }
@@ -1188,6 +1596,12 @@
           errBox.classList.remove(
             "hidden"
           );
+
+          confirmBtn.disabled =
+            false;
+
+          confirmBtn.textContent =
+            "Verify & Replace";
         }
       };
   }
@@ -1417,10 +1831,6 @@
                       ex.total_marks
                     ) || 0;
 
-                  // ==================================================
-                  // SCORE FIX
-                  // ==================================================
-
                   const hasScore =
                     ex.score !==
                       null &&
@@ -1537,8 +1947,7 @@
                     }
 
                   } else if (
-                    now <
-                    start
+                    now < start
                   ) {
 
                     status = `
@@ -1549,8 +1958,7 @@
                     `;
 
                   } else if (
-                    now >
-                    end
+                    now > end
                   ) {
 
                     status = `
@@ -1626,9 +2034,9 @@
               </div>
             `;
 
-      // ============================================================
+      // ========================================================
       // START EXAM BUTTONS
-      // ============================================================
+      // ========================================================
 
       document
         .querySelectorAll(
