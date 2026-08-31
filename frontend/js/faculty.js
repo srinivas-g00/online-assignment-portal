@@ -7,8 +7,7 @@
 
   if (!user) return;
 
-  const $ = (id) =>
-    document.getElementById(id);
+  const $ = (id) => document.getElementById(id);
 
   let questionRowCount = 0;
 
@@ -22,9 +21,9 @@
       btn.onclick = () => {
         document
           .querySelectorAll(".tabs button")
-          .forEach((b) =>
-            b.classList.remove("active")
-          );
+          .forEach((b) => {
+            b.classList.remove("active");
+          });
 
         btn.classList.add("active");
 
@@ -49,24 +48,15 @@
           activeTab.classList.remove("hidden");
         }
 
-        if (
-          btn.dataset.tab ===
-          "requests"
-        ) {
+        if (btn.dataset.tab === "requests") {
           loadRequests();
         }
 
-        if (
-          btn.dataset.tab ===
-          "assignments"
-        ) {
+        if (btn.dataset.tab === "assignments") {
           loadAssignments();
         }
 
-        if (
-          btn.dataset.tab ===
-          "exams"
-        ) {
+        if (btn.dataset.tab === "exams") {
           loadExams();
         }
       };
@@ -78,10 +68,7 @@
 
   async function init() {
     try {
-      const me =
-        await api(
-          "/api/faculty/me"
-        );
+      const me = await api("/api/faculty/me");
 
       if ($("facName")) {
         $("facName").textContent =
@@ -137,10 +124,7 @@
 
       if (!listEl) return;
 
-      if (
-        !rows ||
-        !rows.length
-      ) {
+      if (!rows || !rows.length) {
         listEl.innerHTML =
           `<div class="empty">No pending registration requests.</div>`;
 
@@ -207,9 +191,7 @@
           .join("");
 
       document
-        .querySelectorAll(
-          "[data-accept]"
-        )
+        .querySelectorAll("[data-accept]")
         .forEach((button) => {
           button.onclick = () =>
             decide(
@@ -219,9 +201,7 @@
         });
 
       document
-        .querySelectorAll(
-          "[data-reject]"
-        )
+        .querySelectorAll("[data-reject]")
         .forEach((button) => {
           button.onclick = () =>
             decide(
@@ -272,9 +252,7 @@
   // POST ASSIGNMENT
   // ============================================================
 
-  if (
-    $("postAssignmentBtn")
-  ) {
+  if ($("postAssignmentBtn")) {
     $("postAssignmentBtn").onclick =
       async () => {
         const title =
@@ -363,15 +341,12 @@
             "Assignment posted to your enrolled students."
           );
 
-          $("newTitle").value =
-            "";
+          $("newTitle").value = "";
 
-          $("newDesc").value =
-            "";
+          $("newDesc").value = "";
 
           if ($("newQFile")) {
-            $("newQFile").value =
-              "";
+            $("newQFile").value = "";
           }
 
           await loadAssignments();
@@ -402,10 +377,7 @@
 
       if (!listEl) return;
 
-      if (
-        !rows ||
-        !rows.length
-      ) {
+      if (!rows || !rows.length) {
         listEl.innerHTML =
           `<div class="empty">You haven't posted any assignments yet.</div>`;
 
@@ -433,22 +405,14 @@
                   (
                     a.due_time ||
                     "23:59:59"
-                  ).slice(
-                    0,
-                    8
-                  );
+                  ).slice(0, 8);
 
                 const datePart =
                   String(
-                    a.due_date ||
-                      ""
+                    a.due_date || ""
                   )
-                    .split(
-                      "T"
-                    )[0]
-                    .split(
-                      " "
-                    )[0];
+                    .split("T")[0]
+                    .split(" ")[0];
 
                 return `
                   <tr>
@@ -494,9 +458,7 @@
                         class="btn secondary"
                         data-open="${a.id}"
                         type="button">
-
                         Open
-
                       </button>
 
                     </td>
@@ -512,9 +474,7 @@
       `;
 
       document
-        .querySelectorAll(
-          "[data-open]"
-        )
+        .querySelectorAll("[data-open]")
         .forEach((button) => {
           button.onclick = () =>
             openAssignment(
@@ -533,9 +493,7 @@
   // OPEN ASSIGNMENT
   // ============================================================
 
-  async function openAssignment(
-    id
-  ) {
+  async function openAssignment(id) {
     try {
       const response =
         await api(
@@ -546,21 +504,14 @@
         response.assignment;
 
       const submissions =
-        response.submissions ||
-        [];
+        response.submissions || [];
 
-      if (
+      if ($("assignmentDetailWrap")) {
         $("assignmentDetailWrap")
-      ) {
-        $("assignmentDetailWrap")
-          .classList.remove(
-            "hidden"
-          );
+          .classList.remove("hidden");
       }
 
-      if (
-        !$("assignmentDetail")
-      ) {
+      if (!$("assignmentDetail")) {
         return;
       }
 
@@ -568,40 +519,27 @@
         (
           a.due_time ||
           "23:59:59"
-        ).slice(
-          0,
-          8
-        );
+        ).slice(0, 8);
 
       const datePart =
         String(
-          a.due_date ||
-            ""
+          a.due_date || ""
         )
-          .split(
-            "T"
-          )[0]
-          .split(
-            " "
-          )[0];
+          .split("T")[0]
+          .split(" ")[0];
 
       const duplicateList =
         submissions.filter(
-          (s) =>
-            s.duplicate_flag
+          (s) => s.duplicate_flag
         );
 
       // ========================================================
       // ASSIGNMENT DETAIL
       // ========================================================
 
-      $("assignmentDetail")
-        .innerHTML = `
-
+      $("assignmentDetail").innerHTML = `
         <h2>
-          ${escapeHtml(
-            a.title
-          )}
+          ${escapeHtml(a.title)}
         </h2>
 
         <p>
@@ -619,12 +557,8 @@
 
           <span class="pill deadline">
             Due:
-            ${escapeHtml(
-              datePart
-            )}
-            ${escapeHtml(
-              timePart
-            )}
+            ${escapeHtml(datePart)}
+            ${escapeHtml(timePart)}
           </span>
 
         </p>
@@ -800,215 +734,215 @@
                 <tbody>
 
                   ${submissions
-                    .map(
-                      (s) => {
-                        const fileName =
-                          (
-                            s.file_path ||
-                            ""
+                    .map((s) => {
+                      const fileName =
+                        (
+                          s.file_path ||
+                          ""
+                        )
+                          .split(
+                            /[/\\]/
                           )
-                            .split(
-                              /[/\\]/
-                            )
-                            .pop();
+                          .pop();
 
-                        const displayName =
-                          s.file_original ||
-                          fileName ||
-                          "Submission File";
+                      const displayName =
+                        s.file_original ||
+                        fileName ||
+                        "Submission File";
 
-                        const hasMarks =
-                          s.final_marks !==
-                            null &&
-                          s.final_marks !==
-                            undefined;
+                      const hasMarks =
+                        s.final_marks !==
+                          null &&
+                        s.final_marks !==
+                          undefined;
 
-                        const posted =
-                          Number(
-                            s.posted
-                          ) === 1;
+                      const posted =
+                        Number(
+                          s.posted
+                        ) === 1;
 
-                        return `
-                          <tr>
+                      return `
+                        <tr>
 
-                            <td>
+                          <td>
 
-                              <b>
-                                ${escapeHtml(
-                                  s.student_name ||
-                                    "Unknown Student"
-                                )}
-                              </b>
+                            <b>
+                              ${escapeHtml(
+                                s.student_name ||
+                                  "Unknown Student"
+                              )}
+                            </b>
 
-                              <br>
+                            <br>
 
-                              <small>
-                                @${escapeHtml(
-                                  s.student_username ||
-                                    ""
-                                )}
-                              </small>
+                            <small>
+                              @${escapeHtml(
+                                s.student_username ||
+                                  ""
+                              )}
+                            </small>
 
-                            </td>
+                          </td>
 
-                            <td>
+                          <td>
+
+                            ${
+                              s.file_path
+                                ? `
+                                  <button
+                                    class="btn secondary"
+                                    data-view-submission="${escapeHtml(
+                                      s.id
+                                    )}"
+                                    data-file-name="${escapeHtml(
+                                      displayName
+                                    )}"
+                                    type="button"
+                                    style="
+                                      white-space:nowrap;
+                                    ">
+
+                                    📄 View / Download
+
+                                  </button>
+
+                                  <div
+                                    style="
+                                      margin-top:5px;
+                                      font-size:12px;
+                                      color:#64748b;
+                                      word-break:break-word;
+                                    ">
+
+                                    ${escapeHtml(
+                                      displayName
+                                    )}
+
+                                  </div>
+                                `
+                                : `
+                                  <span class="note">
+                                    No file
+                                  </span>
+                                `
+                            }
+
+                          </td>
+
+                          <td>
+                            ${fmtDateTime(
+                              s.submitted_at
+                            )}
+                          </td>
+
+                          <td>
+
+                            <b>
+                              ${
+                                s.similarity_pct !=
+                                  null
+                                  ? s.similarity_pct +
+                                    "%"
+                                  : "—"
+                              }
+                            </b>
+
+                          </td>
+
+                          <td>
+
+                            <span
+                              class="marks"
+                              style="
+                                font-weight:700;
+                              ">
 
                               ${
-                                s.file_path
-                                  ? `
-                                    <button
-                                      class="btn secondary"
-                                      data-view-submission="${escapeHtml(
-                                        s.id
-                                      )}"
-                                      type="button"
-                                      style="
-                                        white-space:nowrap;
-                                      ">
-
-                                      📄 View Submission
-
-                                    </button>
-
-                                    <div
-                                      style="
-                                        margin-top:5px;
-                                        font-size:12px;
-                                        color:#64748b;
-                                      ">
-
-                                      ${escapeHtml(
-                                        displayName
-                                      )}
-
-                                    </div>
-                                  `
-                                  : `
-                                    <span class="note">
-                                      No file
-                                    </span>
-                                  `
+                                hasMarks
+                                  ? `${s.final_marks}/${a.total_marks}`
+                                  : "—"
                               }
 
-                            </td>
+                            </span>
 
-                            <td>
+                            <br>
 
-                              ${fmtDateTime(
-                                s.submitted_at
-                              )}
+                            <small>
 
-                            </td>
+                              ${
+                                posted
+                                  ? "Posted"
+                                  : "Not posted"
+                              }
 
-                            <td>
+                            </small>
 
-                              <b>
+                          </td>
+
+                          <td>
+
+                            <small>
+
+                              ${
+                                s.auto_feedback
+                                  ? escapeHtml(
+                                      s.auto_feedback
+                                    )
+                                  : "—"
+                              }
+
+                            </small>
+
+                          </td>
+
+                          <td>
+
+                            <div
+                              class="row-buttons">
+
+                              <button
+                                class="btn secondary"
+                                data-edit="${escapeHtml(
+                                  s.id
+                                )}"
+                                type="button">
+
+                                Change marks
+
+                              </button>
+
+                              <button
+                                class="btn ${
+                                  posted
+                                    ? "secondary"
+                                    : "success"
+                                }"
+                                data-post="${escapeHtml(
+                                  s.id
+                                )}"
                                 ${
-                                  s.similarity_pct !=
-                                    null
-                                    ? s.similarity_pct +
-                                      "%"
-                                    : "—"
+                                  !hasMarks ||
+                                  posted
+                                    ? "disabled"
+                                    : ""
                                 }
-                              </b>
-
-                            </td>
-
-                            <td>
-
-                              <span
-                                class="marks"
-                                style="
-                                  font-weight:700;
-                                ">
-
-                                ${
-                                  hasMarks
-                                    ? `${s.final_marks}/${a.total_marks}`
-                                    : "—"
-                                }
-
-                              </span>
-
-                              <br>
-
-                              <small>
+                                type="button">
 
                                 ${
                                   posted
                                     ? "Posted"
-                                    : "Not posted"
+                                    : "Post marks"
                                 }
 
-                              </small>
+                              </button>
 
-                            </td>
+                            </div>
 
-                            <td>
+                          </td>
 
-                              <small>
-
-                                ${
-                                  s.auto_feedback
-                                    ? escapeHtml(
-                                        s.auto_feedback
-                                      )
-                                    : "—"
-                                }
-
-                              </small>
-
-                            </td>
-
-                            <td>
-
-                              <div
-                                class="row-buttons">
-
-                                <button
-                                  class="btn secondary"
-                                  data-edit="${escapeHtml(
-                                    s.id
-                                  )}"
-                                  type="button">
-
-                                  Change marks
-
-                                </button>
-
-                                <button
-                                  class="btn ${
-                                    posted
-                                      ? "secondary"
-                                      : "success"
-                                  }"
-                                  data-post="${escapeHtml(
-                                    s.id
-                                  )}"
-                                  ${
-                                    !hasMarks ||
-                                    posted
-                                      ? "disabled"
-                                      : ""
-                                  }
-                                  type="button">
-
-                                  ${
-                                    posted
-                                      ? "Posted"
-                                      : "Post marks"
-                                  }
-
-                                </button>
-
-                              </div>
-
-                            </td>
-
-                          </tr>
-                        `;
-                      }
-                    )
+                        </tr>
+                      `;
+                    })
                     .join("")}
 
                 </tbody>
@@ -1074,11 +1008,13 @@
           "[data-view-submission]"
         )
         .forEach((button) => {
-          button.onclick = () =>
+          button.onclick = () => {
             viewStudentSubmission(
-              button.dataset
-                .viewSubmission
+              button.dataset.viewSubmission,
+              button.dataset.fileName ||
+                "student-submission"
             );
+          };
         });
 
       // ========================================================
@@ -1124,9 +1060,7 @@
                 "Answer key saved successfully."
               );
 
-              await openAssignment(
-                id
-              );
+              await openAssignment(id);
             } catch (err) {
               notice(
                 "Failed",
@@ -1142,9 +1076,7 @@
       // AUTO CORRECTION
       // ========================================================
 
-      if (
-        $("runCorrectionBtn")
-      ) {
+      if ($("runCorrectionBtn")) {
         $("runCorrectionBtn").onclick =
           async () => {
             try {
@@ -1159,8 +1091,7 @@
               await api(
                 `/api/faculty/assignments/${id}/auto-correct`,
                 {
-                  method:
-                    "POST",
+                  method: "POST",
                   body: {
                     matchThreshold,
                     penaltyMarks,
@@ -1173,9 +1104,7 @@
                 "Duplicates analyzed and marks updated."
               );
 
-              await openAssignment(
-                id
-              );
+              await openAssignment(id);
             } catch (err) {
               notice(
                 "Failed",
@@ -1198,8 +1127,7 @@
         .forEach((button) => {
           button.onclick = () =>
             editMarks(
-              button.dataset
-                .edit,
+              button.dataset.edit,
               a,
               id
             );
@@ -1216,8 +1144,7 @@
         .forEach((button) => {
           button.onclick = () =>
             postMarks(
-              button.dataset
-                .post,
+              button.dataset.post,
               id
             );
         });
@@ -1232,31 +1159,12 @@
   }
 
   // ============================================================
-  // VIEW STUDENT SUBMISSION
-  // ============================================================
-  //
-  // IMPORTANT:
-  // The Supabase `answers` bucket is PRIVATE.
-  //
-  // Therefore we cannot simply use:
-  //
-  //   <a href="/api/faculty/submissions/.../file">
-  //
-  // because normal browser navigation does not automatically
-  // include the JWT Authorization header.
-  //
-  // Instead:
-  //   1. Get the faculty JWT.
-  //   2. Fetch the protected API endpoint.
-  //   3. Convert the response to a Blob.
-  //   4. Open the Blob in a new browser tab.
-  //
-  // This keeps the Supabase service-role key completely
-  // hidden from the browser.
+  // VIEW / DOWNLOAD STUDENT SUBMISSION
   // ============================================================
 
   async function viewStudentSubmission(
-    submissionId
+    submissionId,
+    originalFileName
   ) {
     if (!submissionId) {
       return notice(
@@ -1267,8 +1175,7 @@
     }
 
     const token =
-      typeof getToken ===
-      "function"
+      typeof getToken === "function"
         ? getToken()
         : "";
 
@@ -1280,25 +1187,35 @@
       );
     }
 
-    const button =
-      document.querySelector(
-        `[data-view-submission="${CSS.escape(
-          String(
-            submissionId
-          )
-        )}"]`
+    const buttons =
+      document.querySelectorAll(
+        "[data-view-submission]"
       );
+
+    let button = null;
+
+    buttons.forEach((b) => {
+      if (
+        String(
+          b.dataset.viewSubmission
+        ) ===
+        String(submissionId)
+      ) {
+        button = b;
+      }
+    });
 
     const originalText =
       button
         ? button.textContent
-        : "";
+        : "📄 View / Download";
 
     if (button) {
       button.disabled = true;
-      button.textContent =
-        "Opening...";
+      button.textContent = "Opening...";
     }
+
+    let blobUrl = null;
 
     try {
       const base =
@@ -1318,14 +1235,21 @@
 
             headers: {
               Authorization:
-                "Bearer " +
-                token,
+                "Bearer " + token,
+              Accept:
+                "*/*",
             },
 
             credentials:
               "same-origin",
+
+            cache: "no-store",
           }
         );
+
+      // --------------------------------------------------------
+      // Backend error
+      // --------------------------------------------------------
 
       if (!response.ok) {
         let message =
@@ -1354,12 +1278,11 @@
               await response.text();
 
             if (text) {
-              message =
-                text;
+              message = text;
             }
           }
         } catch {
-          // Keep default message
+          // Keep original error
         }
 
         throw new Error(
@@ -1367,36 +1290,106 @@
         );
       }
 
+      // --------------------------------------------------------
+      // Convert response to Blob
+      // --------------------------------------------------------
+
       const blob =
         await response.blob();
 
-      if (!blob.size) {
+      if (!blob || !blob.size) {
         throw new Error(
-          "The submitted file is empty."
+          "The student's submitted file is empty."
         );
       }
 
       // --------------------------------------------------------
-      // Create temporary browser URL
+      // Determine MIME type
       // --------------------------------------------------------
 
-      const blobUrl =
-        URL.createObjectURL(
-          blob
+      let mimeType =
+        blob.type ||
+        response.headers.get(
+          "content-type"
+        ) ||
+        "application/octet-stream";
+
+      // --------------------------------------------------------
+      // Create browser Blob URL
+      // --------------------------------------------------------
+
+      blobUrl =
+        URL.createObjectURL(blob);
+
+      // --------------------------------------------------------
+      // Try to preview
+      // --------------------------------------------------------
+
+      const previewable =
+        mimeType.startsWith(
+          "application/pdf"
+        ) ||
+        mimeType.startsWith(
+          "image/"
+        ) ||
+        mimeType.startsWith(
+          "text/"
         );
 
-      const newWindow =
-        window.open(
-          blobUrl,
-          "_blank"
-        );
+      if (previewable) {
+        const newWindow =
+          window.open(
+            blobUrl,
+            "_blank"
+          );
 
-      // --------------------------------------------------------
-      // Popup blocker fallback
-      // --------------------------------------------------------
+        // ------------------------------------------------------
+        // Popup blocked
+        // ------------------------------------------------------
 
-      if (!newWindow) {
-        // Trigger a normal download when popup is blocked.
+        if (newWindow) {
+          newWindow.focus();
+
+          notice(
+            "File opened",
+            originalFileName
+              ? `Opened ${originalFileName}.`
+              : "The student submission was opened successfully."
+          );
+        } else {
+          const link =
+            document.createElement(
+              "a"
+            );
+
+          link.href =
+            blobUrl;
+
+          link.download =
+            originalFileName ||
+            "student-submission";
+
+          document.body.appendChild(
+            link
+          );
+
+          link.click();
+
+          link.remove();
+
+          notice(
+            "Download started",
+            "Your browser blocked the preview, so the file download was started."
+          );
+        }
+      } else {
+        // ------------------------------------------------------
+        // DOC/DOCX/PPT/XLS/ZIP and other files
+        // ------------------------------------------------------
+        // Browsers normally cannot preview these files.
+        // Force a download.
+        // ------------------------------------------------------
+
         const link =
           document.createElement(
             "a"
@@ -1406,6 +1399,7 @@
           blobUrl;
 
         link.download =
+          originalFileName ||
           "student-submission";
 
         document.body.appendChild(
@@ -1416,28 +1410,25 @@
 
         link.remove();
 
-        setTimeout(
-          () =>
-            URL.revokeObjectURL(
-              blobUrl
-            ),
-          60000
-        );
-
         notice(
-          "File ready",
-          "Your browser blocked the preview, so the submission download was started."
-        );
-      } else {
-        // Give the new tab time to load the Blob.
-        setTimeout(
-          () =>
-            URL.revokeObjectURL(
-              blobUrl
-            ),
-          60000
+          "Download started",
+          originalFileName
+            ? `${originalFileName} is being downloaded.`
+            : "The student submission download has started."
         );
       }
+
+      // --------------------------------------------------------
+      // Release Blob URL later
+      // --------------------------------------------------------
+
+      setTimeout(() => {
+        if (blobUrl) {
+          URL.revokeObjectURL(blobUrl);
+        }
+      }, 60000);
+
+      blobUrl = null;
     } catch (err) {
       console.error(
         "VIEW STUDENT SUBMISSION ERROR:",
@@ -1450,12 +1441,17 @@
           "The student's submitted file could not be opened.",
         "err"
       );
+
+      if (blobUrl) {
+        URL.revokeObjectURL(
+          blobUrl
+        );
+      }
     } finally {
       if (button) {
         button.disabled = false;
         button.textContent =
-          originalText ||
-          "📄 View Submission";
+          originalText;
       }
     }
   }
@@ -1469,6 +1465,13 @@
     assignment,
     assignmentId
   ) {
+    const currentMarks =
+      assignment &&
+      assignment.currentMarks !=
+        null
+        ? assignment.currentMarks
+        : "";
+
     openModal(
       "Change marks",
       `
@@ -1488,7 +1491,8 @@
             max="${
               assignment.total_marks
             }"
-            step="1">
+            step="1"
+            value="${currentMarks}">
 
         </div>
 
@@ -1532,9 +1536,7 @@
           await api(
             `/api/faculty/submissions/${subId}/marks`,
             {
-              method:
-                "PUT",
-
+              method: "PUT",
               body: {
                 marks:
                   marksValue,
@@ -1648,18 +1650,13 @@
                   String(
                     exam.exam_date ||
                       ""
-                  ).split(
-                    "T"
-                  )[0];
+                  ).split("T")[0];
 
                 const startTime =
                   String(
                     exam.start_time ||
                       ""
-                  ).slice(
-                    0,
-                    8
-                  );
+                  ).slice(0, 8);
 
                 return `
                   <tr>
@@ -1728,8 +1725,7 @@
         .forEach((button) => {
           button.onclick = () =>
             openResults(
-              button.dataset
-                .results
+              button.dataset.results
             );
         });
     } catch (err) {
@@ -1776,10 +1772,6 @@
         return;
       }
 
-      // --------------------------------------------------------
-      // NO RESULTS
-      // --------------------------------------------------------
-
       if (!results.length) {
         $("examResults")
           .innerHTML = `
@@ -1796,10 +1788,6 @@
 
         return;
       }
-
-      // --------------------------------------------------------
-      // RESULT TABLE
-      // --------------------------------------------------------
 
       $("examResults").innerHTML = `
         <h2>
@@ -1848,12 +1836,9 @@
             ${results
               .map((r) => {
                 const hasScore =
-                  r.score !==
-                    null &&
-                  r.score !==
-                    undefined &&
-                  r.score !==
-                    "";
+                  r.score !== null &&
+                  r.score !== undefined &&
+                  r.score !== "";
 
                 const numericScore =
                   hasScore
@@ -1863,8 +1848,7 @@
                     : null;
 
                 const safeScore =
-                  numericScore !==
-                    null &&
+                  numericScore !== null &&
                   !Number.isNaN(
                     numericScore
                   )
@@ -1930,11 +1914,12 @@
 
                       <span
                         class="marks"
-                        style="font-weight:700;">
+                        style="
+                          font-weight:700;
+                        ">
 
                         ${
-                          safeScore !==
-                            null
+                          safeScore !== null
                             ? `${safeScore}/${total}`
                             : "Not graded"
                         }
@@ -1959,7 +1944,8 @@
 
                     <td>
 
-                      <div class="row-buttons">
+                      <div
+                        class="row-buttons">
 
                         <button
                           class="btn secondary"
@@ -1982,8 +1968,7 @@
                             r.id
                           )}"
                           ${
-                            safeScore ===
-                              null ||
+                            safeScore === null ||
                             posted
                               ? "disabled"
                               : ""
@@ -2024,9 +2009,7 @@
           const result =
             results.find(
               (r) =>
-                String(
-                  r.id
-                ) ===
+                String(r.id) ===
                 String(
                   button.dataset
                     .editscore
@@ -2035,8 +2018,7 @@
 
           button.onclick = () =>
             editScore(
-              button.dataset
-                .editscore,
+              button.dataset.editscore,
               exam,
               examId,
               result
@@ -2123,10 +2105,8 @@
 
     const currentScore =
       result &&
-      result.score !==
-        null &&
-      result.score !==
-        undefined
+      result.score !== null &&
+      result.score !== undefined
         ? result.score
         : "";
 
@@ -2188,9 +2168,7 @@
           await api(
             `/api/faculty/exam-attempts/${attemptId}/score`,
             {
-              method:
-                "PUT",
-
+              method: "PUT",
               body: {
                 score:
                   scoreValue,
@@ -2225,8 +2203,7 @@
 
   if ($("addQuestionBtn")) {
     $("addQuestionBtn").onclick =
-      () =>
-        addQuestionRow();
+      () => addQuestionRow();
   }
 
   function addQuestionRow() {
@@ -2326,21 +2303,10 @@
           <select
             class="q-correct">
 
-            <option value="A">
-              A
-            </option>
-
-            <option value="B">
-              B
-            </option>
-
-            <option value="C">
-              C
-            </option>
-
-            <option value="D">
-              D
-            </option>
+            <option value="A">A</option>
+            <option value="B">B</option>
+            <option value="C">C</option>
+            <option value="D">D</option>
 
           </select>
 
@@ -2378,13 +2344,9 @@
       </button>
     `;
 
-    if (
+    if ($("questionsWrap")) {
       $("questionsWrap")
-    ) {
-      $("questionsWrap")
-        .appendChild(
-          div
-        );
+        .appendChild(div);
     }
   }
 
@@ -2425,91 +2387,83 @@
           );
         }
 
-        const questions =
-          [];
+        const questions = [];
 
         document
           .querySelectorAll(
             "#questionsWrap .mini-card"
           )
-          .forEach(
-            (card) => {
-              const textInput =
-                card.querySelector(
-                  ".q-text"
-                );
+          .forEach((card) => {
+            const textInput =
+              card.querySelector(
+                ".q-text"
+              );
 
-              const optionA =
-                card.querySelector(
-                  ".q-a"
-                );
+            const optionA =
+              card.querySelector(
+                ".q-a"
+              );
 
-              const optionB =
-                card.querySelector(
-                  ".q-b"
-                );
+            const optionB =
+              card.querySelector(
+                ".q-b"
+              );
 
-              const optionC =
-                card.querySelector(
-                  ".q-c"
-                );
+            const optionC =
+              card.querySelector(
+                ".q-c"
+              );
 
-              const optionD =
-                card.querySelector(
-                  ".q-d"
-                );
+            const optionD =
+              card.querySelector(
+                ".q-d"
+              );
 
-              const correct =
-                card.querySelector(
-                  ".q-correct"
-                );
+            const correct =
+              card.querySelector(
+                ".q-correct"
+              );
 
-              const marks =
-                card.querySelector(
-                  ".q-marks"
-                );
+            const marks =
+              card.querySelector(
+                ".q-marks"
+              );
 
-              if (
-                !textInput ||
-                !optionA ||
-                !optionB ||
-                !optionC ||
-                !optionD ||
-                !correct ||
-                !marks
-              ) {
-                return;
-              }
-
-              questions.push({
-                questionText:
-                  textInput.value
-                    .trim(),
-
-                optionA:
-                  optionA.value
-                    .trim(),
-
-                optionB:
-                  optionB.value
-                    .trim(),
-
-                optionC:
-                  optionC.value
-                    .trim(),
-
-                optionD:
-                  optionD.value
-                    .trim(),
-
-                correctOption:
-                  correct.value,
-
-                marks:
-                  marks.value,
-              });
+            if (
+              !textInput ||
+              !optionA ||
+              !optionB ||
+              !optionC ||
+              !optionD ||
+              !correct ||
+              !marks
+            ) {
+              return;
             }
-          );
+
+            questions.push({
+              questionText:
+                textInput.value.trim(),
+
+              optionA:
+                optionA.value.trim(),
+
+              optionB:
+                optionB.value.trim(),
+
+              optionC:
+                optionC.value.trim(),
+
+              optionD:
+                optionD.value.trim(),
+
+              correctOption:
+                correct.value,
+
+              marks:
+                marks.value,
+            });
+          });
 
         if (
           !questions.length ||
@@ -2551,22 +2505,16 @@
             "The MCQ exam was created for students accepted under you."
           );
 
-          if (
+          if ($("questionsWrap")) {
             $("questionsWrap")
-          ) {
-            $("questionsWrap")
-              .innerHTML =
-              "";
+              .innerHTML = "";
           }
 
-          questionRowCount =
-            0;
+          questionRowCount = 0;
 
           addQuestionRow();
 
-          $("examTitle")
-            .value =
-            "";
+          $("examTitle").value = "";
 
           await loadExams();
         } catch (err) {
