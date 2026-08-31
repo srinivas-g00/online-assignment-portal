@@ -35,13 +35,10 @@
           "exams",
           "newExam",
         ].forEach((tab) => {
-          const el =
-            $(`tab-${tab}`);
+          const el = $(`tab-${tab}`);
 
           if (el) {
-            el.classList.add(
-              "hidden"
-            );
+            el.classList.add("hidden");
           }
         });
 
@@ -49,9 +46,7 @@
           $(`tab-${btn.dataset.tab}`);
 
         if (activeTab) {
-          activeTab.classList.remove(
-            "hidden"
-          );
+          activeTab.classList.remove("hidden");
         }
 
         if (
@@ -218,8 +213,7 @@
         .forEach((button) => {
           button.onclick = () =>
             decide(
-              button.dataset
-                .accept,
+              button.dataset.accept,
               "accepted"
             );
         });
@@ -231,8 +225,7 @@
         .forEach((button) => {
           button.onclick = () =>
             decide(
-              button.dataset
-                .reject,
+              button.dataset.reject,
               "rejected"
             );
         });
@@ -525,8 +518,7 @@
         .forEach((button) => {
           button.onclick = () =>
             openAssignment(
-              button.dataset
-                .open
+              button.dataset.open
             );
         });
     } catch (err) {
@@ -593,16 +585,6 @@
             " "
           )[0];
 
-      const qFileName =
-        (
-          a.question_file ||
-          ""
-        )
-          .split(
-            /[/\\]/
-          )
-          .pop();
-
       const duplicateList =
         submissions.filter(
           (s) =>
@@ -610,7 +592,7 @@
         );
 
       // ========================================================
-      // ASSIGNMENT DETAIL HTML
+      // ASSIGNMENT DETAIL
       // ========================================================
 
       $("assignmentDetail")
@@ -841,6 +823,11 @@
                           s.final_marks !==
                             undefined;
 
+                        const posted =
+                          Number(
+                            s.posted
+                          ) === 1;
+
                         return `
                           <tr>
 
@@ -869,36 +856,48 @@
                               ${
                                 s.file_path
                                   ? `
-                                    <a
-                                      href="/api/faculty/submissions/${encodeURIComponent(
+                                    <button
+                                      class="btn secondary"
+                                      data-view-submission="${escapeHtml(
                                         s.id
-                                      )}/file"
-                                      target="_blank"
-                                      rel="noopener noreferrer"
+                                      )}"
+                                      type="button"
                                       style="
-                                        color:#4f46e5;
-                                        font-weight:600;
-                                        text-decoration:underline;
+                                        white-space:nowrap;
                                       ">
 
-                                      📄
+                                      📄 View Submission
+
+                                    </button>
+
+                                    <div
+                                      style="
+                                        margin-top:5px;
+                                        font-size:12px;
+                                        color:#64748b;
+                                      ">
+
                                       ${escapeHtml(
                                         displayName
                                       )}
 
-                                    </a>
+                                    </div>
                                   `
-                                  : escapeHtml(
-                                      displayName
-                                    )
+                                  : `
+                                    <span class="note">
+                                      No file
+                                    </span>
+                                  `
                               }
 
                             </td>
 
                             <td>
+
                               ${fmtDateTime(
                                 s.submitted_at
                               )}
+
                             </td>
 
                             <td>
@@ -919,7 +918,9 @@
 
                               <span
                                 class="marks"
-                                style="font-weight:700;">
+                                style="
+                                  font-weight:700;
+                                ">
 
                                 ${
                                   hasMarks
@@ -932,13 +933,13 @@
                               <br>
 
                               <small>
+
                                 ${
-                                  Number(
-                                    s.posted
-                                  ) === 1
+                                  posted
                                     ? "Posted"
                                     : "Not posted"
                                 }
+
                               </small>
 
                             </td>
@@ -946,6 +947,7 @@
                             <td>
 
                               <small>
+
                                 ${
                                   s.auto_feedback
                                     ? escapeHtml(
@@ -953,17 +955,21 @@
                                       )
                                     : "—"
                                 }
+
                               </small>
 
                             </td>
 
                             <td>
 
-                              <div class="row-buttons">
+                              <div
+                                class="row-buttons">
 
                                 <button
                                   class="btn secondary"
-                                  data-edit="${s.id}"
+                                  data-edit="${escapeHtml(
+                                    s.id
+                                  )}"
                                   type="button">
 
                                   Change marks
@@ -972,27 +978,23 @@
 
                                 <button
                                   class="btn ${
-                                    Number(
-                                      s.posted
-                                    ) === 1
+                                    posted
                                       ? "secondary"
                                       : "success"
                                   }"
-                                  data-post="${s.id}"
+                                  data-post="${escapeHtml(
+                                    s.id
+                                  )}"
                                   ${
                                     !hasMarks ||
-                                    Number(
-                                      s.posted
-                                    ) === 1
+                                    posted
                                       ? "disabled"
                                       : ""
                                   }
                                   type="button">
 
                                   ${
-                                    Number(
-                                      s.posted
-                                    ) === 1
+                                    posted
                                       ? "Posted"
                                       : "Post marks"
                                   }
@@ -1062,6 +1064,22 @@
             : ""
         }
       `;
+
+      // ========================================================
+      // VIEW STUDENT SUBMISSION BUTTONS
+      // ========================================================
+
+      document
+        .querySelectorAll(
+          "[data-view-submission]"
+        )
+        .forEach((button) => {
+          button.onclick = () =>
+            viewStudentSubmission(
+              button.dataset
+                .viewSubmission
+            );
+        });
 
       // ========================================================
       // SAVE ANSWER KEY
@@ -1214,6 +1232,235 @@
   }
 
   // ============================================================
+  // VIEW STUDENT SUBMISSION
+  // ============================================================
+  //
+  // IMPORTANT:
+  // The Supabase `answers` bucket is PRIVATE.
+  //
+  // Therefore we cannot simply use:
+  //
+  //   <a href="/api/faculty/submissions/.../file">
+  //
+  // because normal browser navigation does not automatically
+  // include the JWT Authorization header.
+  //
+  // Instead:
+  //   1. Get the faculty JWT.
+  //   2. Fetch the protected API endpoint.
+  //   3. Convert the response to a Blob.
+  //   4. Open the Blob in a new browser tab.
+  //
+  // This keeps the Supabase service-role key completely
+  // hidden from the browser.
+  // ============================================================
+
+  async function viewStudentSubmission(
+    submissionId
+  ) {
+    if (!submissionId) {
+      return notice(
+        "File unavailable",
+        "Submission ID is missing.",
+        "err"
+      );
+    }
+
+    const token =
+      typeof getToken ===
+      "function"
+        ? getToken()
+        : "";
+
+    if (!token) {
+      return notice(
+        "Session expired",
+        "Please log in again.",
+        "err"
+      );
+    }
+
+    const button =
+      document.querySelector(
+        `[data-view-submission="${CSS.escape(
+          String(
+            submissionId
+          )
+        )}"]`
+      );
+
+    const originalText =
+      button
+        ? button.textContent
+        : "";
+
+    if (button) {
+      button.disabled = true;
+      button.textContent =
+        "Opening...";
+    }
+
+    try {
+      const base =
+        window.API_BASE ||
+        window.location.origin;
+
+      const url =
+        `${base}/api/faculty/submissions/${encodeURIComponent(
+          submissionId
+        )}/file`;
+
+      const response =
+        await fetch(
+          url,
+          {
+            method: "GET",
+
+            headers: {
+              Authorization:
+                "Bearer " +
+                token,
+            },
+
+            credentials:
+              "same-origin",
+          }
+        );
+
+      if (!response.ok) {
+        let message =
+          `Request failed (${response.status})`;
+
+        try {
+          const contentType =
+            response.headers.get(
+              "content-type"
+            ) || "";
+
+          if (
+            contentType.includes(
+              "application/json"
+            )
+          ) {
+            const data =
+              await response.json();
+
+            message =
+              data.error ||
+              data.message ||
+              message;
+          } else {
+            const text =
+              await response.text();
+
+            if (text) {
+              message =
+                text;
+            }
+          }
+        } catch {
+          // Keep default message
+        }
+
+        throw new Error(
+          message
+        );
+      }
+
+      const blob =
+        await response.blob();
+
+      if (!blob.size) {
+        throw new Error(
+          "The submitted file is empty."
+        );
+      }
+
+      // --------------------------------------------------------
+      // Create temporary browser URL
+      // --------------------------------------------------------
+
+      const blobUrl =
+        URL.createObjectURL(
+          blob
+        );
+
+      const newWindow =
+        window.open(
+          blobUrl,
+          "_blank"
+        );
+
+      // --------------------------------------------------------
+      // Popup blocker fallback
+      // --------------------------------------------------------
+
+      if (!newWindow) {
+        // Trigger a normal download when popup is blocked.
+        const link =
+          document.createElement(
+            "a"
+          );
+
+        link.href =
+          blobUrl;
+
+        link.download =
+          "student-submission";
+
+        document.body.appendChild(
+          link
+        );
+
+        link.click();
+
+        link.remove();
+
+        setTimeout(
+          () =>
+            URL.revokeObjectURL(
+              blobUrl
+            ),
+          60000
+        );
+
+        notice(
+          "File ready",
+          "Your browser blocked the preview, so the submission download was started."
+        );
+      } else {
+        // Give the new tab time to load the Blob.
+        setTimeout(
+          () =>
+            URL.revokeObjectURL(
+              blobUrl
+            ),
+          60000
+        );
+      }
+    } catch (err) {
+      console.error(
+        "VIEW STUDENT SUBMISSION ERROR:",
+        err
+      );
+
+      notice(
+        "Could not open submission",
+        err.message ||
+          "The student's submitted file could not be opened.",
+        "err"
+      );
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent =
+          originalText ||
+          "📄 View Submission";
+      }
+    }
+  }
+
+  // ============================================================
   // EDIT ASSIGNMENT MARKS
   // ============================================================
 
@@ -1285,7 +1532,9 @@
           await api(
             `/api/faculty/submissions/${subId}/marks`,
             {
-              method: "PUT",
+              method:
+                "PUT",
+
               body: {
                 marks:
                   marksValue,
@@ -1714,7 +1963,9 @@
 
                         <button
                           class="btn secondary"
-                          data-editscore="${r.id}"
+                          data-editscore="${escapeHtml(
+                            r.id
+                          )}"
                           type="button">
 
                           Edit
@@ -1727,7 +1978,9 @@
                               ? "secondary"
                               : "success"
                           }"
-                          data-postscore="${r.id}"
+                          data-postscore="${escapeHtml(
+                            r.id
+                          )}"
                           ${
                             safeScore ===
                               null ||

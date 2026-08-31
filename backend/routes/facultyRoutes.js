@@ -1,10 +1,10 @@
 // backend/routes/facultyRoutes.js
 
 const express = require("express");
-const fs = require("fs");
 const path = require("path");
 
 const db = require("../config/db");
+
 const {
   auth,
   requireRole,
@@ -39,19 +39,6 @@ router.use(requireRole("faculty"));
 // ============================================================
 // TEXT EXTRACTION FROM BUFFER
 // ============================================================
-//
-// Supports:
-//   PDF
-//   DOCX
-//   TXT
-//
-// This is used for:
-//   - answer keys
-//   - student submissions
-//
-// Files are now stored in Supabase Storage, so we extract
-// directly from downloaded buffers instead of Render disk.
-//
 
 async function extractTextFromBuffer(
   buffer,
@@ -74,9 +61,7 @@ async function extractTextFromBuffer(
     // --------------------------------------------------------
 
     if (extension === ".txt") {
-      return buffer.toString(
-        "utf8"
-      );
+      return buffer.toString("utf8");
     }
 
     // --------------------------------------------------------
@@ -89,11 +74,9 @@ async function extractTextFromBuffer(
           require("mammoth");
 
         const result =
-          await mammoth.extractRawText(
-            {
-              buffer,
-            }
-          );
+          await mammoth.extractRawText({
+            buffer,
+          });
 
         return result.value || "";
       } catch (err) {
@@ -116,9 +99,7 @@ async function extractTextFromBuffer(
           require("pdf-parse");
 
         const data =
-          await pdfParse(
-            buffer
-          );
+          await pdfParse(buffer);
 
         return data.text || "";
       } catch (err) {
@@ -492,6 +473,7 @@ router.post(
           `
           SELECT *
           FROM enrollments
+
           WHERE id = $1
             AND faculty_id = $2
           `,
@@ -549,14 +531,6 @@ router.post(
 // ============================================================
 // CREATE ASSIGNMENT
 // ============================================================
-//
-// Question paper:
-//   Browser -> Multer memory -> Supabase questions bucket
-//
-// Database stores:
-//   question_file = Supabase Storage path
-//
-// ============================================================
 
 router.post(
   "/assignments",
@@ -592,7 +566,7 @@ router.post(
 
     try {
       // ------------------------------------------------------
-      // Upload question paper to Supabase
+      // Upload question paper
       // ------------------------------------------------------
 
       if (req.file) {
@@ -607,7 +581,7 @@ router.post(
       }
 
       // ------------------------------------------------------
-      // Insert assignment
+      // Save assignment
       // ------------------------------------------------------
 
       const result =
@@ -646,9 +620,9 @@ router.post(
               title
             ).trim(),
 
-            (
+            String(
               description ||
-              ""
+                ""
             ).trim(),
 
             storagePath,
@@ -668,6 +642,8 @@ router.post(
         );
 
       return res.json({
+        success: true,
+
         message:
           "Assignment posted.",
 
@@ -675,17 +651,15 @@ router.post(
           result.rows[0].id,
       });
     } catch (err) {
-      // ------------------------------------------------------
-      // Clean up Supabase file if DB insertion failed
-      // ------------------------------------------------------
-
       if (storagePath) {
         try {
           await deleteFromSupabase(
             BUCKETS.questions,
             storagePath
           );
-        } catch (cleanupError) {
+        } catch (
+          cleanupError
+        ) {
           console.error(
             "QUESTION FILE CLEANUP ERROR:",
             cleanupError.message
@@ -729,6 +703,7 @@ router.get(
             (
               SELECT COUNT(*)
               FROM submissions s
+
               WHERE s.assignment_id =
                     a.id
             ) AS submission_count
@@ -776,11 +751,16 @@ router.get(
     res
   ) => {
     try {
+      // ------------------------------------------------------
+      // Verify assignment belongs to faculty
+      // ------------------------------------------------------
+
       const assignmentResult =
         await db.query(
           `
           SELECT *
           FROM assignments
+
           WHERE id = $1
             AND faculty_id = $2
           `,
@@ -802,17 +782,28 @@ router.get(
         });
       }
 
+      // ------------------------------------------------------
+      // Get submissions
+      // ------------------------------------------------------
+
       const submissionResult =
         await db.query(
           `
           SELECT
             s.*,
+
             u.name AS student_name,
             u.username AS student_username
+
           FROM submissions s
+
           JOIN users u
-            ON u.id = s.student_id
-          WHERE s.assignment_id = $1
+            ON u.id =
+               s.student_id
+
+          WHERE s.assignment_id =
+                $1
+
           ORDER BY
             s.submitted_at ASC
           `,
@@ -844,14 +835,168 @@ router.get(
 );
 
 // ============================================================
-// FACULTY QUESTION PAPER VIEW
+// VIEW STUDENT SUBMISSION
 // ============================================================
 //
-// Protected route for faculty.
+// Faculty can view/download the student's submitted file.
 //
-// The file is downloaded from the private Supabase
-// `questions` bucket and streamed through the backend.
+// Security:
+//   - Faculty must be logged in.
+//   - Submission must exist.
+//   - Submission's assignment must belong to this faculty.
+//   - File is downloaded from the PRIVATE Supabase
+//     `answers` bucket.
 //
+// Frontend URL:
+//   /api/faculty/submissions/:submissionId/file
+//
+// ============================================================
+
+router.get(
+  "/submissions/:submissionId/file",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      // ------------------------------------------------------
+      // Find submission and verify ownership
+      // ------------------------------------------------------
+
+      const result =
+        await db.query(
+          `
+          SELECT
+            s.id,
+            s.file_path,
+            s.file_original,
+            s.file_size,
+            s.submitted_at,
+
+            a.id AS assignment_id,
+            a.title AS assignment_title,
+            a.faculty_id
+
+          FROM submissions s
+
+          JOIN assignments a
+            ON a.id =
+               s.assignment_id
+
+          WHERE s.id = $1
+            AND a.faculty_id = $2
+          `,
+          [
+            req.params.submissionId,
+            req.user.id,
+          ]
+        );
+
+      const submission =
+        result.rows[0];
+
+      if (!submission) {
+        return res.status(
+          404
+        ).json({
+          error:
+            "Submission not found.",
+        });
+      }
+
+      // ------------------------------------------------------
+      // Check file path
+      // ------------------------------------------------------
+
+      if (
+        !submission.file_path
+      ) {
+        return res.status(
+          404
+        ).json({
+          error:
+            "No submitted file is attached to this submission.",
+        });
+      }
+
+      // ------------------------------------------------------
+      // Download from PRIVATE Supabase bucket
+      // ------------------------------------------------------
+
+      const buffer =
+        await downloadFromSupabase(
+          BUCKETS.answers,
+          submission.file_path
+        );
+
+      // ------------------------------------------------------
+      // Safe display filename
+      // ------------------------------------------------------
+
+      const displayName =
+        String(
+          submission.file_original ||
+            path.basename(
+              submission.file_path
+            ) ||
+            "submission"
+        )
+          .replace(
+            /["\r\n]/g,
+            "_"
+          );
+
+      // ------------------------------------------------------
+      // Response headers
+      // ------------------------------------------------------
+
+      res.setHeader(
+        "Content-Type",
+        getMimeType(
+          displayName
+        )
+      );
+
+      res.setHeader(
+        "Content-Length",
+        buffer.length
+      );
+
+      res.setHeader(
+        "Content-Disposition",
+        `inline; filename="${displayName}"`
+      );
+
+      res.setHeader(
+        "Cache-Control",
+        "private, no-store"
+      );
+
+      return res.send(
+        buffer
+      );
+    } catch (err) {
+      console.error(
+        "VIEW STUDENT SUBMISSION ERROR:",
+        err.message
+      );
+
+      if (!res.headersSent) {
+        return res.status(
+          500
+        ).json({
+          error:
+            "Could not open student submission: " +
+            err.message,
+        });
+      }
+    }
+  }
+);
+
+// ============================================================
+// FACULTY QUESTION PAPER VIEW
+// ============================================================
 
 router.get(
   "/assignments/:id/question-paper",
@@ -867,7 +1012,9 @@ router.get(
             id,
             question_file,
             question_original
+
           FROM assignments
+
           WHERE id = $1
             AND faculty_id = $2
           `,
@@ -900,21 +1047,16 @@ router.get(
         });
       }
 
-      const storagePath =
-        String(
-          assignment.question_file
-        ).trim();
-
       const buffer =
         await downloadFromSupabase(
           BUCKETS.questions,
-          storagePath
+          assignment.question_file
         );
 
       const displayName =
         assignment.question_original ||
         path.basename(
-          storagePath
+          assignment.question_file
         );
 
       res.setHeader(
@@ -968,17 +1110,6 @@ router.get(
 // ============================================================
 // SET / UPDATE ANSWER KEY
 // ============================================================
-//
-// Answer key file:
-//   Browser -> Multer memory -> Supabase keys bucket
-//
-// Extracted text is saved into:
-//   assignments.answer_key
-//
-// Storage path is saved into:
-//   assignments.answer_key_file
-//
-// ============================================================
 
 router.post(
   "/assignments/:id/answer-key",
@@ -996,6 +1127,7 @@ router.post(
           `
           SELECT *
           FROM assignments
+
           WHERE id = $1
             AND faculty_id = $2
           `,
@@ -1017,10 +1149,6 @@ router.post(
         });
       }
 
-      // ------------------------------------------------------
-      // Text directly from textarea
-      // ------------------------------------------------------
-
       let keyText =
         String(
           req.body.keyText ||
@@ -1028,7 +1156,7 @@ router.post(
         ).trim();
 
       // ------------------------------------------------------
-      // Upload key file + extract text
+      // Upload answer key
       // ------------------------------------------------------
 
       if (req.file) {
@@ -1069,13 +1197,10 @@ router.post(
         });
       }
 
-      // ------------------------------------------------------
-      // Save database record
-      // ------------------------------------------------------
-
       await db.query(
         `
         UPDATE assignments
+
         SET
           answer_key = $1,
 
@@ -1095,21 +1220,21 @@ router.post(
       );
 
       return res.json({
+        success: true,
+
         message:
           "Answer key saved. You can now run auto-correction.",
       });
     } catch (err) {
-      // ------------------------------------------------------
-      // Clean up uploaded key if DB update failed
-      // ------------------------------------------------------
-
       if (storagePath) {
         try {
           await deleteFromSupabase(
             BUCKETS.keys,
             storagePath
           );
-        } catch (cleanupError) {
+        } catch (
+          cleanupError
+        ) {
           console.error(
             "KEY FILE CLEANUP ERROR:",
             cleanupError.message
@@ -1135,14 +1260,6 @@ router.post(
 
 // ============================================================
 // AUTO-CORRECTION + DUPLICATE DETECTION
-// ============================================================
-//
-// Answer key:
-//   Supabase keys bucket
-//
-// Student submissions:
-//   Supabase answers bucket
-//
 // ============================================================
 
 router.post(
@@ -1179,15 +1296,12 @@ router.post(
           )
         );
 
-      // ------------------------------------------------------
-      // Assignment
-      // ------------------------------------------------------
-
       const assignmentResult =
         await db.query(
           `
           SELECT *
           FROM assignments
+
           WHERE id = $1
             AND faculty_id = $2
           `,
@@ -1208,10 +1322,6 @@ router.post(
             "Assignment not found.",
         });
       }
-
-      // ------------------------------------------------------
-      // ANSWER KEY
-      // ------------------------------------------------------
 
       let answerKeyText =
         String(
@@ -1250,15 +1360,12 @@ router.post(
         });
       }
 
-      // ------------------------------------------------------
-      // GET SUBMISSIONS
-      // ------------------------------------------------------
-
       const submissionResult =
         await db.query(
           `
           SELECT
             s.*,
+
             u.name AS student_name,
             u.username AS student_username
 
@@ -1293,9 +1400,9 @@ router.post(
         });
       }
 
-      // ======================================================
-      // DOWNLOAD + EXTRACT STUDENT FILES
-      // ======================================================
+      // ------------------------------------------------------
+      // Download and extract submissions
+      // ------------------------------------------------------
 
       for (
         const sub of submissions
@@ -1329,9 +1436,9 @@ router.post(
         }
       }
 
-      // ======================================================
-      // DUPLICATE DETECTION
-      // ======================================================
+      // ------------------------------------------------------
+      // Duplicate detection
+      // ------------------------------------------------------
 
       for (
         let i = 0;
@@ -1365,7 +1472,6 @@ router.post(
             submissions[j]
               .extractedText;
 
-          // Don't flag empty/unreadable files
           if (
             !text1 ||
             !text1.trim() ||
@@ -1402,9 +1508,9 @@ router.post(
         }
       }
 
-      // ======================================================
-      // SCORE SUBMISSIONS
-      // ======================================================
+      // ------------------------------------------------------
+      // Score submissions
+      // ------------------------------------------------------
 
       for (
         const sub of submissions
@@ -1461,10 +1567,6 @@ router.post(
             "AI Score: 0% - no readable text could be extracted from the submission.";
         }
 
-        // ----------------------------------------------------
-        // Duplicate penalty
-        // ----------------------------------------------------
-
         if (
           sub.duplicate_flag
         ) {
@@ -1487,10 +1589,6 @@ router.post(
             ` [DUPLICATE DETECTED: Similar to ${duplicateNames}. Deducted ${penalty} marks.]`;
         }
 
-        // ----------------------------------------------------
-        // Safety clamp
-        // ----------------------------------------------------
-
         calculatedMarks =
           Math.max(
             0,
@@ -1502,13 +1600,10 @@ router.post(
             )
           );
 
-        // ----------------------------------------------------
-        // SAVE MARKS
-        // ----------------------------------------------------
-
         await db.query(
           `
           UPDATE submissions
+
           SET
             similarity_pct = $1,
             duplicate_flag = $2,
@@ -1517,6 +1612,7 @@ router.post(
             auto_feedback = $5,
             graded = TRUE,
             posted = 0
+
           WHERE id = $6
           `,
           [
@@ -1648,10 +1744,12 @@ router.put(
       await db.query(
         `
         UPDATE submissions
+
         SET
           final_marks = $1,
           graded = TRUE,
           posted = 0
+
         WHERE id = $2
         `,
         [
@@ -1753,10 +1851,12 @@ router.post(
       await db.query(
         `
         UPDATE submissions
+
         SET
           posted = 1,
           posted_at =
             CURRENT_TIMESTAMP
+
         WHERE id = $1
         `,
         [
@@ -1824,7 +1924,7 @@ router.post(
     }
 
     // --------------------------------------------------------
-    // Validate questions BEFORE transaction
+    // Validate questions
     // --------------------------------------------------------
 
     for (
@@ -2081,7 +2181,9 @@ router.get(
           `
           SELECT *
           FROM exams
+
           WHERE faculty_id = $1
+
           ORDER BY
             exam_date DESC,
             start_time DESC
@@ -2126,6 +2228,7 @@ router.get(
           `
           SELECT *
           FROM exams
+
           WHERE id = $1
             AND faculty_id = $2
           `,
@@ -2208,14 +2311,6 @@ router.get(
 
 // ============================================================
 // EDIT EXAM SCORE
-// ============================================================
-//
-// IMPORTANT:
-// exam_attempts.posted is SMALLINT.
-//
-// 0 = Not posted
-// 1 = Posted
-//
 // ============================================================
 
 router.put(
@@ -2306,6 +2401,7 @@ router.put(
       await db.query(
         `
         UPDATE exam_attempts
+
         SET
           score = $1,
           posted =
@@ -2346,10 +2442,6 @@ router.put(
 
 // ============================================================
 // POST EXAM RESULT
-// ============================================================
-//
-// exam_attempts.posted is SMALLINT.
-//
 // ============================================================
 
 router.post(
@@ -2416,6 +2508,7 @@ router.post(
       await db.query(
         `
         UPDATE exam_attempts
+
         SET
           posted =
             1::smallint
