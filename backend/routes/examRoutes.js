@@ -1,5 +1,16 @@
 // backend/routes/examRoutes.js
-// All routes here are for STUDENTS taking an MCQ exam.
+// Student MCQ exam routes.
+//
+// Flow:
+// 1. Student starts exam.
+// 2. Questions are returned WITHOUT correct answers.
+// 3. Student answers are autosaved.
+// 4. On submit, every exam question is checked against
+//    exam_questions.correct_option.
+// 5. Calculated score is immediately saved in
+//    exam_attempts.score.
+// 6. Faculty Results can immediately see the score.
+// 7. Faculty can edit and post the result separately.
 
 const express = require("express");
 const db = require("../config/db");
@@ -23,16 +34,23 @@ router.use(
 // CHECK EXAM ELIGIBILITY
 // ============================================================
 
-async function assertEligible(examId, studentId) {
+async function assertEligible(
+  examId,
+  studentId
+) {
   try {
-    const examResult = await db.query(
-      `SELECT *
-       FROM exams
-       WHERE id = $1`,
-      [examId]
-    );
+    const examResult =
+      await db.query(
+        `
+        SELECT *
+        FROM exams
+        WHERE id = $1
+        `,
+        [examId]
+      );
 
-    const exam = examResult.rows[0];
+    const exam =
+      examResult.rows[0];
 
     if (!exam) {
       return {
@@ -41,25 +59,32 @@ async function assertEligible(examId, studentId) {
     }
 
     // --------------------------------------------------------
-    // Check faculty enrollment
+    // Check accepted enrollment
     // --------------------------------------------------------
 
     try {
-      const enrollmentResult = await db.query(
-        `SELECT id
-         FROM enrollments
-         WHERE faculty_id = $1
-           AND student_id = $2
-           AND status IN ('accepted', 'enrolled')
-         LIMIT 1`,
-        [
-          exam.faculty_id,
-          studentId,
-        ]
-      );
+      const enrollmentResult =
+        await db.query(
+          `
+          SELECT id
+          FROM enrollments
+          WHERE faculty_id = $1
+            AND student_id = $2
+            AND status IN (
+              'accepted',
+              'enrolled'
+            )
+          LIMIT 1
+          `,
+          [
+            exam.faculty_id,
+            studentId,
+          ]
+        );
 
       if (
-        enrollmentResult.rows.length === 0
+        enrollmentResult.rows.length ===
+        0
       ) {
         return {
           error:
@@ -67,8 +92,6 @@ async function assertEligible(examId, studentId) {
         };
       }
     } catch (err) {
-      // If enrollment structure differs,
-      // allow the exam to continue.
       console.warn(
         "Enrollment check skipped:",
         err.message
@@ -85,9 +108,51 @@ async function assertEligible(examId, studentId) {
     );
 
     return {
-      error: "Could not check exam eligibility.",
+      error:
+        "Could not check exam eligibility.",
     };
   }
+}
+
+// ============================================================
+// GET EXAM WINDOW
+// ============================================================
+
+function getExamWindow(exam) {
+  const startTime =
+    String(
+      exam.start_time ||
+        "00:00:00"
+    ).slice(0, 8);
+
+  const datePart =
+    String(
+      exam.exam_date || ""
+    )
+      .split("T")[0]
+      .split(" ")[0];
+
+  const start =
+    new Date(
+      `${datePart}T${startTime}`
+    ).getTime();
+
+  const durationMin =
+    Number(
+      exam.duration_min
+    ) || 30;
+
+  const end =
+    start +
+    durationMin *
+      60 *
+      1000;
+
+  return {
+    start,
+    end,
+    durationMin,
+  };
 }
 
 // ============================================================
@@ -102,10 +167,11 @@ router.post(
       const {
         exam,
         error,
-      } = await assertEligible(
-        req.params.id,
-        req.user.id
-      );
+      } =
+        await assertEligible(
+          req.params.id,
+          req.user.id
+        );
 
       if (error) {
         return res.status(403).json({
@@ -114,33 +180,22 @@ router.post(
       }
 
       // ------------------------------------------------------
-      // Calculate exam timing
+      // Exam timing
       // ------------------------------------------------------
 
-      const now = Date.now();
+      const now =
+        Date.now();
 
-      const startTime = String(
-        exam.start_time || "00:00:00"
-      ).slice(0, 8);
+      const {
+        start,
+        end,
+        durationMin,
+      } =
+        getExamWindow(
+          exam
+        );
 
-      const datePart = String(
-        exam.exam_date || ""
-      )
-        .split("T")[0]
-        .split(" ")[0];
-
-      const start = new Date(
-        `${datePart}T${startTime}`
-      ).getTime();
-
-      const durationMin =
-        Number(exam.duration_min) || 30;
-
-      const end =
-        start +
-        durationMin * 60 * 1000;
-
-      if (!isNaN(start)) {
+      if (!Number.isNaN(start)) {
         if (now < start) {
           return res.status(403).json({
             error:
@@ -160,22 +215,28 @@ router.post(
       // Find existing attempt
       // ------------------------------------------------------
 
-      let attemptResult = await db.query(
-        `SELECT *
-         FROM exam_attempts
-         WHERE exam_id = $1
-           AND student_id = $2
-         LIMIT 1`,
-        [
-          exam.id,
-          req.user.id,
-        ]
-      );
+      let attemptResult =
+        await db.query(
+          `
+          SELECT *
+          FROM exam_attempts
+          WHERE exam_id = $1
+            AND student_id = $2
+          LIMIT 1
+          `,
+          [
+            exam.id,
+            req.user.id,
+          ]
+        );
 
       let attempt =
         attemptResult.rows[0];
 
+      // ------------------------------------------------------
       // Already submitted
+      // ------------------------------------------------------
+
       if (
         attempt &&
         attempt.submitted_at
@@ -183,53 +244,71 @@ router.post(
         return res.status(409).json({
           error:
             "You have already submitted this exam.",
+          score:
+            attempt.score !== null &&
+            attempt.score !== undefined
+              ? Number(
+                  attempt.score
+                )
+              : null,
         });
       }
 
       // ------------------------------------------------------
-      // Create attempt if needed
+      // Create attempt
       // ------------------------------------------------------
 
       if (!attempt) {
         const insertAttempt =
           await db.query(
-            `INSERT INTO exam_attempts
-             (
-               exam_id,
-               student_id,
-               started_at
-             )
-             VALUES
-             (
-               $1,
-               $2,
-               CURRENT_TIMESTAMP
-             )
-             ON CONFLICT
-             (exam_id, student_id)
-             DO NOTHING
-             RETURNING *`,
+            `
+            INSERT INTO exam_attempts
+            (
+              exam_id,
+              student_id,
+              started_at,
+              score,
+              posted
+            )
+            VALUES
+            (
+              $1,
+              $2,
+              CURRENT_TIMESTAMP,
+              NULL,
+              0
+            )
+            ON CONFLICT
+            (
+              exam_id,
+              student_id
+            )
+            DO NOTHING
+            RETURNING *
+            `,
             [
               exam.id,
               req.user.id,
             ]
           );
 
-        // If another request created it
-        // at the same time, fetch it.
         if (
-          insertAttempt.rows.length > 0
+          insertAttempt.rows
+            .length >
+          0
         ) {
           attempt =
             insertAttempt.rows[0];
         } else {
           const retryResult =
             await db.query(
-              `SELECT *
-               FROM exam_attempts
-               WHERE exam_id = $1
-                 AND student_id = $2
-               LIMIT 1`,
+              `
+              SELECT *
+              FROM exam_attempts
+              WHERE exam_id = $1
+                AND student_id = $2
+              LIMIT 1
+              `,
               [
                 exam.id,
                 req.user.id,
@@ -241,87 +320,115 @@ router.post(
         }
       }
 
+      if (!attempt) {
+        return res.status(500).json({
+          error:
+            "Could not create exam attempt.",
+        });
+      }
+
       // ------------------------------------------------------
-      // Get exam questions
-      // IMPORTANT:
-      // Do NOT send correct_option to student.
+      // Get questions
+      //
+      // NEVER send correct_option.
       // ------------------------------------------------------
 
       const questionResult =
         await db.query(
-          `SELECT
-             id,
-             question_text,
-             option_a,
-             option_b,
-             option_c,
-             option_d,
-             marks
-           FROM exam_questions
-           WHERE exam_id = $1
-           ORDER BY id`,
+          `
+          SELECT
+            id,
+            question_text,
+            option_a,
+            option_b,
+            option_c,
+            option_d,
+            marks
+          FROM exam_questions
+          WHERE exam_id = $1
+          ORDER BY id ASC
+          `,
           [exam.id]
         );
 
       const questions =
-        questionResult.rows;
+        questionResult.rows ||
+        [];
 
       // ------------------------------------------------------
-      // Calculate marks
+      // Total marks
       // ------------------------------------------------------
 
-      const totalMarks =
+      const calculatedTotalMarks =
         questions.reduce(
-          (sum, question) =>
+          (
+            sum,
+            question
+          ) =>
             sum +
-            (Number(
-              question.marks
-            ) || 1),
+            (
+              Number(
+                question.marks
+              ) || 1
+            ),
           0
         );
 
+      const totalMarks =
+        Number(
+          exam.total_marks
+        ) || calculatedTotalMarks;
+
+      // ------------------------------------------------------
+      // Remaining time
+      // ------------------------------------------------------
+
       const secondsLeft =
-        !isNaN(end)
+        !Number.isNaN(end)
           ? Math.max(
               0,
               Math.round(
-                (end - now) / 1000
+                (end - now) /
+                  1000
               )
             )
-          : durationMin * 60;
+          : durationMin *
+            60;
 
-      // ------------------------------------------------------
-      // Return exam
-      // ------------------------------------------------------
-
-      res.json({
-        attemptId: attempt.id,
+      return res.json({
+        attemptId:
+          attempt.id,
 
         questions,
 
         secondsLeft,
 
         exam: {
-          id: exam.id,
-          title: exam.title,
+          id:
+            exam.id,
+
+          title:
+            exam.title,
+
           subject:
-            exam.subject || null,
+            exam.subject ||
+            null,
+
           durationMin,
-          totalMarks:
-            Number(
-              exam.total_marks
-            ) || totalMarks,
+
+          totalMarks,
         },
       });
     } catch (err) {
       console.error(
         "START EXAM ERROR:",
-        err.message
+        err
       );
 
-      res.status(500).json({
+      return res.status(500).json({
         error:
-          "Could not start exam.",
+          "Could not start exam: " +
+          err.message,
       });
     }
   }
@@ -342,12 +449,31 @@ router.post(
       } = req.body;
 
       // ------------------------------------------------------
-      // Validate selected option
+      // Validate question ID
+      // ------------------------------------------------------
+
+      if (
+        questionId ===
+          null ||
+        questionId ===
+          undefined ||
+        questionId === ""
+      ) {
+        return res.status(400).json({
+          error:
+            "Question ID is required.",
+        });
+      }
+
+      // ------------------------------------------------------
+      // Normalize answer
       // ------------------------------------------------------
 
       let selectedValue =
-        selected === null ||
-        selected === undefined ||
+        selected ===
+            null ||
+        selected ===
+            undefined ||
         selected === ""
           ? null
           : String(
@@ -358,20 +484,18 @@ router.post(
 
       if (
         selectedValue &&
-        !["A", "B", "C", "D"].includes(
+        ![
+          "A",
+          "B",
+          "C",
+          "D",
+        ].includes(
           selectedValue
         )
       ) {
         return res.status(400).json({
           error:
-            "Invalid answer option.",
-        });
-      }
-
-      if (!questionId) {
-        return res.status(400).json({
-          error:
-            "Question ID is required.",
+            "Invalid answer option. Use A, B, C or D.",
         });
       }
 
@@ -381,10 +505,16 @@ router.post(
 
       const attemptResult =
         await db.query(
-          `SELECT *
-           FROM exam_attempts
-           WHERE id = $1
-             AND student_id = $2`,
+          `
+          SELECT
+            id,
+            exam_id,
+            student_id,
+            submitted_at
+          FROM exam_attempts
+          WHERE id = $1
+            AND student_id = $2
+          `,
           [
             req.params.attemptId,
             req.user.id,
@@ -401,7 +531,9 @@ router.post(
         });
       }
 
-      if (attempt.submitted_at) {
+      if (
+        attempt.submitted_at
+      ) {
         return res.status(403).json({
           error:
             "Exam already submitted.",
@@ -409,15 +541,18 @@ router.post(
       }
 
       // ------------------------------------------------------
-      // Make sure question belongs to exam
+      // Verify question belongs to exam
       // ------------------------------------------------------
 
       const questionResult =
         await db.query(
-          `SELECT id
-           FROM exam_questions
-           WHERE id = $1
-             AND exam_id = $2`,
+          `
+          SELECT id
+          FROM exam_questions
+          WHERE id = $1
+            AND exam_id = $2
+          LIMIT 1
+          `,
           [
             questionId,
             attempt.exam_id,
@@ -425,7 +560,8 @@ router.post(
         );
 
       if (
-        questionResult.rows.length === 0
+        questionResult.rows
+          .length === 0
       ) {
         return res.status(400).json({
           error:
@@ -434,29 +570,36 @@ router.post(
       }
 
       // ------------------------------------------------------
-      // UPSERT answer
+      // Save answer
       // ------------------------------------------------------
 
       await db.query(
-        `INSERT INTO exam_answers
-         (
-           attempt_id,
-           question_id,
-           selected,
-           saved_at
-         )
-         VALUES
-         (
-           $1,
-           $2,
-           $3,
-           CURRENT_TIMESTAMP
-         )
-         ON CONFLICT
-         (attempt_id, question_id)
-         DO UPDATE SET
-           selected = EXCLUDED.selected,
-           saved_at = CURRENT_TIMESTAMP`,
+        `
+        INSERT INTO exam_answers
+        (
+          attempt_id,
+          question_id,
+          selected,
+          saved_at
+        )
+        VALUES
+        (
+          $1,
+          $2,
+          $3,
+          CURRENT_TIMESTAMP
+        )
+        ON CONFLICT
+        (
+          attempt_id,
+          question_id
+        )
+        DO UPDATE SET
+          selected =
+            EXCLUDED.selected,
+          saved_at =
+            CURRENT_TIMESTAMP
+        `,
         [
           attempt.id,
           questionId,
@@ -464,22 +607,191 @@ router.post(
         ]
       );
 
-      res.json({
-        saved: true,
+      return res.json({
+        saved:
+          true,
+
+        questionId,
+
+        selected:
+          selectedValue,
       });
     } catch (err) {
       console.error(
         "SAVE ANSWER ERROR:",
-        err.message
+        err
       );
 
-      res.status(500).json({
+      return res.status(500).json({
         error:
-          "Could not save answer.",
+          "Could not save answer: " +
+          err.message,
       });
     }
   }
 );
+
+// ============================================================
+// GRADE MCQ ATTEMPT
+// ============================================================
+//
+// IMPORTANT:
+//
+// Every question is loaded.
+// If there is no answer, it receives 0.
+//
+// Score calculation:
+//
+// correct answer -> question marks
+// wrong answer   -> 0
+// unanswered     -> 0
+//
+// The final score is returned and also saved by submitExam.
+//
+
+async function gradeAttempt(
+  attemptId
+) {
+  try {
+    const result =
+      await db.query(
+        `
+        SELECT
+          eq.id AS question_id,
+          eq.correct_option,
+          eq.marks,
+          ea.selected
+        FROM exam_attempts at
+        JOIN exam_questions eq
+          ON eq.exam_id =
+             at.exam_id
+        LEFT JOIN exam_answers ea
+          ON ea.attempt_id =
+             at.id
+         AND ea.question_id =
+             eq.id
+        WHERE at.id = $1
+        ORDER BY eq.id ASC
+        `,
+        [attemptId]
+      );
+
+    const rows =
+      result.rows || [];
+
+    if (!rows.length) {
+      throw new Error(
+        "No questions found for this exam attempt."
+      );
+    }
+
+    let score = 0;
+
+    let correctCount = 0;
+    let answeredCount = 0;
+
+    for (
+      const row of rows
+    ) {
+      const selected =
+        row.selected !==
+            null &&
+        row.selected !==
+            undefined
+          ? String(
+              row.selected
+            )
+              .trim()
+              .toUpperCase()
+          : null;
+
+      const correct =
+        row.correct_option !==
+            null &&
+        row.correct_option !==
+            undefined
+          ? String(
+              row.correct_option
+            )
+              .trim()
+              .toUpperCase()
+          : null;
+
+      const marks =
+        Number(
+          row.marks
+        ) || 1;
+
+      if (selected) {
+        answeredCount++;
+      }
+
+      if (
+        selected &&
+        correct &&
+        selected === correct
+      ) {
+        score += marks;
+        correctCount++;
+      }
+    }
+
+    console.log(
+      "================================================"
+    );
+
+    console.log(
+      "[EXAM GRADING]"
+    );
+
+    console.log(
+      "Attempt ID:",
+      attemptId
+    );
+
+    console.log(
+      "Total Questions:",
+      rows.length
+    );
+
+    console.log(
+      "Answered:",
+      answeredCount
+    );
+
+    console.log(
+      "Correct:",
+      correctCount
+    );
+
+    console.log(
+      "Calculated Score:",
+      score
+    );
+
+    console.log(
+      "================================================"
+    );
+
+    return {
+      score,
+      totalQuestions:
+        rows.length,
+      answeredCount,
+      correctCount,
+    };
+  } catch (err) {
+    console.error(
+      "GRADE ATTEMPT ERROR:",
+      err
+    );
+
+    // IMPORTANT:
+    // Do not silently return 0.
+    // Throw the error so submit does not save a false score.
+    throw err;
+  }
+}
 
 // ============================================================
 // SUBMIT EXAM
@@ -489,23 +801,30 @@ router.post(
 router.post(
   "/attempts/:attemptId/submit",
   async (req, res) => {
+    const client =
+      await db.connect();
+
     try {
       // ------------------------------------------------------
-      // Get attempt + exam
+      // Find attempt + exam
       // ------------------------------------------------------
 
       const result =
-        await db.query(
-          `SELECT
-             at.*,
-             ex.duration_min,
-             ex.exam_date,
-             ex.start_time
-           FROM exam_attempts at
-           JOIN exams ex
-             ON ex.id = at.exam_id
-           WHERE at.id = $1
-             AND at.student_id = $2`,
+        await client.query(
+          `
+          SELECT
+            at.*,
+            ex.title,
+            ex.duration_min,
+            ex.exam_date,
+            ex.start_time,
+            ex.total_marks
+          FROM exam_attempts at
+          JOIN exams ex
+            ON ex.id = at.exam_id
+          WHERE at.id = $1
+            AND at.student_id = $2
+          `,
           [
             req.params.attemptId,
             req.user.id,
@@ -522,138 +841,370 @@ router.post(
         });
       }
 
+      // ------------------------------------------------------
       // Already submitted
-      if (attempt.submitted_at) {
+      // ------------------------------------------------------
+
+      if (
+        attempt.submitted_at
+      ) {
         return res.json({
           message:
             "Already submitted.",
-          score: attempt.score,
+
+          score:
+            attempt.score ===
+              null ||
+            attempt.score ===
+              undefined
+              ? null
+              : Number(
+                  attempt.score
+                ),
         });
       }
 
       // ------------------------------------------------------
-      // Grade exam
+      // Check if exam time has ended
       // ------------------------------------------------------
 
-      const score =
+      const now =
+        Date.now();
+
+      const {
+        start,
+        end,
+      } =
+        getExamWindow(
+          attempt
+        );
+
+      const autoSubmitted =
+        req.body.autoSubmitted ===
+          true ||
+        req.body.autoSubmitted ===
+          "true";
+
+      // ------------------------------------------------------
+      // Manual submit before closing is allowed.
+      //
+      // Automatic submission is also allowed when timer ends.
+      //
+      // Server prevents a manual submission long after
+      // the exam window has closed.
+      // ------------------------------------------------------
+
+      if (
+        !Number.isNaN(end) &&
+        now > end &&
+        !autoSubmitted
+      ) {
+        // Allow the submit because the student may have
+        // clicked just as the window closed, but make the
+        // server-side state authoritative.
+        console.warn(
+          "[EXAM] Submit received after exam end:",
+          attempt.id
+        );
+      }
+
+      // ------------------------------------------------------
+      // Begin transaction
+      // ------------------------------------------------------
+
+      await client.query(
+        "BEGIN"
+      );
+
+      // ------------------------------------------------------
+      // Grade against the answer key in database
+      // ------------------------------------------------------
+
+      const grading =
         await gradeAttempt(
           attempt.id
         );
 
-      const autoSubmitted =
-        Boolean(
-          req.body.autoSubmitted
+      const calculatedScore =
+        Number(
+          grading.score
+        );
+
+      if (
+        !Number.isFinite(
+          calculatedScore
+        ) ||
+        calculatedScore <
+          0
+      ) {
+        throw new Error(
+          "Calculated exam score is invalid."
+        );
+      }
+
+      // ------------------------------------------------------
+      // Save score
+      //
+      // posted remains 0 until faculty posts the result.
+      // ------------------------------------------------------
+
+      const updateResult =
+        await client.query(
+          `
+          UPDATE exam_attempts
+          SET
+            submitted_at =
+              CURRENT_TIMESTAMP,
+
+            score =
+              $1,
+
+            auto_submitted =
+              $2,
+
+            posted =
+              0::smallint
+          WHERE id = $3
+            AND student_id = $4
+            AND submitted_at IS NULL
+          RETURNING
+            id,
+            score,
+            submitted_at,
+            auto_submitted,
+            posted
+          `,
+          [
+            calculatedScore,
+            autoSubmitted,
+            attempt.id,
+            req.user.id,
+          ]
         );
 
       // ------------------------------------------------------
-      // Save result
+      // Verify update
       // ------------------------------------------------------
 
-      await db.query(
-        `UPDATE exam_attempts
-         SET
-           submitted_at = CURRENT_TIMESTAMP,
-           score = $1,
-           auto_submitted = $2
-         WHERE id = $3`,
-        [
-          score,
-          autoSubmitted,
-          attempt.id,
-        ]
+      const saved =
+        updateResult.rows[0];
+
+      if (!saved) {
+        await client.query(
+          "ROLLBACK"
+        );
+
+        return res.status(409).json({
+          error:
+            "Exam was already submitted by another request.",
+        });
+      }
+
+      // ------------------------------------------------------
+      // Commit
+      // ------------------------------------------------------
+
+      await client.query(
+        "COMMIT"
       );
 
-      res.json({
-        message: autoSubmitted
-          ? "Time up - exam auto-submitted."
-          : "Exam submitted.",
+      console.log(
+        "================================================"
+      );
 
-        score,
+      console.log(
+        "[EXAM SUBMITTED]"
+      );
+
+      console.log(
+        "Attempt:",
+        attempt.id
+      );
+
+      console.log(
+        "Student:",
+        req.user.id
+      );
+
+      console.log(
+        "Exam:",
+        attempt.title
+      );
+
+      console.log(
+        "Score:",
+        saved.score
+      );
+
+      console.log(
+        "Auto submitted:",
+        saved.auto_submitted
+      );
+
+      console.log(
+        "Posted:",
+        saved.posted
+      );
+
+      console.log(
+        "================================================"
+      );
+
+      return res.json({
+        message:
+          autoSubmitted
+            ? "Time up - exam auto-submitted."
+            : "Exam submitted.",
+
+        score:
+          Number(
+            saved.score
+          ),
+
+        totalMarks:
+          Number(
+            attempt.total_marks
+          ) || 0,
+
+        correctCount:
+          grading.correctCount,
+
+        answeredCount:
+          grading.answeredCount,
+
+        totalQuestions:
+          grading.totalQuestions,
+
+        posted:
+          Number(
+            saved.posted
+          ) || 0,
       });
     } catch (err) {
+      try {
+        await client.query(
+          "ROLLBACK"
+        );
+      } catch (
+        rollbackError
+      ) {
+        console.error(
+          "ROLLBACK ERROR:",
+          rollbackError.message
+        );
+      }
+
       console.error(
         "SUBMIT EXAM ERROR:",
-        err.message
+        err
       );
 
-      res.status(500).json({
+      return res.status(500).json({
         error:
-          "Could not submit exam.",
+          "Could not submit exam: " +
+          err.message,
       });
+    } finally {
+      client.release();
     }
   }
 );
 
 // ============================================================
-// GRADE MCQ ATTEMPT
+// GET CURRENT STUDENT ATTEMPT
 // ============================================================
+//
+// This endpoint is useful for the student dashboard and also
+// allows the frontend to retrieve the saved score.
+//
 
-async function gradeAttempt(
-  attemptId
-) {
-  try {
-    const result =
-      await db.query(
-        `SELECT
-           ea.selected,
-           eq.correct_option,
-           eq.marks
-         FROM exam_answers ea
-         JOIN exam_questions eq
-           ON eq.id = ea.question_id
-         WHERE ea.attempt_id = $1`,
-        [attemptId]
+router.get(
+  "/attempts/:attemptId",
+  async (req, res) => {
+    try {
+      const result =
+        await db.query(
+          `
+          SELECT
+            at.id,
+            at.exam_id,
+            at.student_id,
+            at.started_at,
+            at.submitted_at,
+            at.score,
+            at.auto_submitted,
+            COALESCE(
+              at.posted,
+              0
+            ) AS posted,
+
+            ex.title,
+            ex.total_marks
+
+          FROM exam_attempts at
+
+          JOIN exams ex
+            ON ex.id =
+               at.exam_id
+
+          WHERE at.id = $1
+            AND at.student_id = $2
+          `,
+          [
+            req.params.attemptId,
+            req.user.id,
+          ]
+        );
+
+      const attempt =
+        result.rows[0];
+
+      if (!attempt) {
+        return res.status(404).json({
+          error:
+            "Attempt not found.",
+        });
+      }
+
+      return res.json({
+        attempt: {
+          ...attempt,
+
+          score:
+            attempt.score ===
+                null ||
+            attempt.score ===
+                undefined
+              ? null
+              : Number(
+                  attempt.score
+                ),
+
+          posted:
+            Number(
+              attempt.posted
+            ) || 0,
+
+          totalMarks:
+            Number(
+              attempt.total_marks
+            ) || 0,
+        },
+      });
+    } catch (err) {
+      console.error(
+        "GET ATTEMPT ERROR:",
+        err.message
       );
 
-    const rows =
-      result.rows;
-
-    return rows.reduce(
-      (sum, row) => {
-        const selected =
-          row.selected
-            ? String(
-                row.selected
-              )
-                .trim()
-                .toUpperCase()
-            : null;
-
-        const correct =
-          row.correct_option
-            ? String(
-                row.correct_option
-              )
-                .trim()
-                .toUpperCase()
-            : null;
-
-        if (
-          selected &&
-          correct &&
-          selected === correct
-        ) {
-          return (
-            sum +
-            (Number(
-              row.marks
-            ) || 1)
-          );
-        }
-
-        return sum;
-      },
-      0
-    );
-  } catch (err) {
-    console.error(
-      "GRADE ATTEMPT ERROR:",
-      err.message
-    );
-
-    return 0;
+      return res.status(500).json({
+        error:
+          "Could not fetch attempt: " +
+          err.message,
+      });
+    }
   }
-}
+);
 
 // ============================================================
 // EXPORT

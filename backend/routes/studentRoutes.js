@@ -1,66 +1,45 @@
 // backend/routes/studentRoutes.js
+//
+// Student routes.
+//
+// File storage:
+//   Question papers -> Supabase Storage: questions
+//   Student answers -> Supabase Storage: answers
+//
+// IMPORTANT:
+// This file no longer uses Render's local uploads directory
+// for permanent student files.
 
 const express = require("express");
 const router = express.Router();
-const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 
 const db = require("../config/db");
-const { auth, requireRole } = require("../middleware/auth");
+const {
+  auth,
+  requireRole,
+} = require("../middleware/auth");
+
+// ============================================================
+// SUPABASE STORAGE UPLOAD UTILITY
+// ============================================================
+
+const {
+  uploadAnswer,
+  uploadToSupabase,
+  downloadFromSupabase,
+  deleteFromSupabase,
+  BUCKETS,
+} = require("../utils/upload");
 
 // ============================================================
 // OTP / EMAIL UTILITY
 // ============================================================
 
-const { sendOtpEmail } = require("../utils/mailer");
-
-// ============================================================
-// FILE UPLOAD CONFIGURATION
-// ============================================================
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = path.join(
-      __dirname,
-      "..",
-      "uploads",
-      "answers"
-    );
-
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, {
-        recursive: true,
-      });
-    }
-
-    cb(null, uploadDir);
-  },
-
-  filename: (req, file, cb) => {
-    const uniqueSuffix =
-      Date.now() +
-      "-" +
-      Math.round(Math.random() * 1e9);
-
-    cb(
-      null,
-      uniqueSuffix +
-        path.extname(file.originalname)
-    );
-  },
-});
-
-const maxMb =
-  Number(process.env.MAX_UPLOAD_MB) || 15;
-
-const upload = multer({
-  storage,
-  limits: {
-    fileSize:
-      maxMb * 1024 * 1024,
-  },
-});
+const {
+  sendOtpEmail,
+} = require("../utils/mailer");
 
 // ============================================================
 // PROTECT ALL STUDENT ROUTES
@@ -70,47 +49,147 @@ router.use(auth);
 router.use(requireRole("student"));
 
 // ============================================================
+// HELPER: DELETE LOCAL TEMP FILE IF IT EXISTS
+// ============================================================
+//
+// Kept for compatibility with any old upload middleware.
+// The new Supabase upload middleware uses memoryStorage,
+// so req.file.path normally does not exist.
+//
+
+function removeLocalFile(file) {
+  if (
+    file &&
+    file.path &&
+    fs.existsSync(file.path)
+  ) {
+    fs.unlink(
+      file.path,
+      () => {}
+    );
+  }
+}
+
+// ============================================================
+// HELPER: GET FILE EXTENSION
+// ============================================================
+
+function getFileExtension(fileName) {
+  return path
+    .extname(
+      String(fileName || "")
+    )
+    .toLowerCase();
+}
+
+// ============================================================
+// HELPER: MIME TYPE
+// ============================================================
+
+function getMimeType(fileName) {
+  const extension =
+    getFileExtension(fileName);
+
+  const mimeTypes = {
+    ".pdf":
+      "application/pdf",
+
+    ".doc":
+      "application/msword",
+
+    ".docx":
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+
+    ".txt":
+      "text/plain",
+
+    ".png":
+      "image/png",
+
+    ".jpg":
+      "image/jpeg",
+
+    ".jpeg":
+      "image/jpeg",
+
+    ".gif":
+      "image/gif",
+
+    ".webp":
+      "image/webp",
+
+    ".zip":
+      "application/zip",
+
+    ".ppt":
+      "application/vnd.ms-powerpoint",
+
+    ".pptx":
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+
+    ".xls":
+      "application/vnd.ms-excel",
+
+    ".xlsx":
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  };
+
+  return (
+    mimeTypes[extension] ||
+    "application/octet-stream"
+  );
+}
+
+// ============================================================
 // 1. CURRENT STUDENT PROFILE
 // ============================================================
 
-router.get("/me", async (req, res) => {
-  try {
-    const result =
-      await db.query(
-        `
-        SELECT
-          id,
-          name,
-          username,
-          email,
-          role,
-          branch,
-          year
-        FROM users
-        WHERE id = $1
-        `,
-        [req.user.id]
+router.get(
+  "/me",
+  async (req, res) => {
+    try {
+      const result =
+        await db.query(
+          `
+          SELECT
+            id,
+            name,
+            username,
+            email,
+            role,
+            branch,
+            year
+          FROM users
+          WHERE id = $1
+          `,
+          [req.user.id]
+        );
+
+      if (
+        !result.rows.length
+      ) {
+        return res.status(404).json({
+          error:
+            "User not found.",
+        });
+      }
+
+      return res.json(
+        result.rows[0]
+      );
+    } catch (err) {
+      console.error(
+        "Student /me error:",
+        err.message
       );
 
-    if (!result.rows.length) {
-      return res.status(404).json({
-        error: "User not found.",
+      return res.status(500).json({
+        error:
+          "Failed to fetch student profile.",
       });
     }
-
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error(
-      "Student /me error:",
-      err.message
-    );
-
-    res.status(500).json({
-      error:
-        "Failed to fetch student profile.",
-    });
   }
-});
+);
 
 // ============================================================
 // 2. SEARCH FACULTIES
@@ -122,7 +201,9 @@ router.get(
     try {
       const searchText =
         req.query.search
-          ? req.query.search.trim()
+          ? String(
+              req.query.search
+            ).trim()
           : "";
 
       const search =
@@ -148,7 +229,8 @@ router.get(
               OR u.subject ILIKE $2
               OR u.branch ILIKE $2
             )
-          ORDER BY u.name ASC
+          ORDER BY
+            u.name ASC
           `,
           [
             req.user.id,
@@ -156,7 +238,7 @@ router.get(
           ]
         );
 
-      res.json(
+      return res.json(
         result.rows || []
       );
     } catch (err) {
@@ -165,7 +247,7 @@ router.get(
         err.message
       );
 
-      res.status(500).json({
+      return res.status(500).json({
         error:
           "Failed to fetch faculty list.",
       });
@@ -204,14 +286,16 @@ router.get(
           ]
         );
 
-      if (!result.rows.length) {
+      if (
+        !result.rows.length
+      ) {
         return res.status(404).json({
           error:
             "Faculty not found.",
         });
       }
 
-      res.json(
+      return res.json(
         result.rows[0]
       );
     } catch (err) {
@@ -220,7 +304,7 @@ router.get(
         err.message
       );
 
-      res.status(500).json({
+      return res.status(500).json({
         error:
           "Failed to fetch faculty details.",
       });
@@ -247,7 +331,9 @@ router.post(
           [req.params.facultyId]
         );
 
-      if (!facultyResult.rows.length) {
+      if (
+        !facultyResult.rows.length
+      ) {
         return res.status(404).json({
           error:
             "Faculty not found.",
@@ -257,7 +343,9 @@ router.post(
       const existingResult =
         await db.query(
           `
-          SELECT id, status
+          SELECT
+            id,
+            status
           FROM enrollments
           WHERE student_id = $1
             AND faculty_id = $2
@@ -268,7 +356,9 @@ router.post(
           ]
         );
 
-      if (existingResult.rows.length) {
+      if (
+        existingResult.rows.length
+      ) {
         return res.status(400).json({
           error:
             `Registration request already exists (${existingResult.rows[0].status}).`,
@@ -296,7 +386,7 @@ router.post(
         ]
       );
 
-      res.json({
+      return res.json({
         message:
           "Registration request sent successfully.",
       });
@@ -306,7 +396,7 @@ router.post(
         err.message
       );
 
-      res.status(500).json({
+      return res.status(500).json({
         error:
           "Failed to send registration request.",
       });
@@ -325,7 +415,8 @@ router.get(
       const enrollmentResult =
         await db.query(
           `
-          SELECT status
+          SELECT
+            status
           FROM enrollments
           WHERE student_id = $1
             AND faculty_id = $2
@@ -337,7 +428,9 @@ router.get(
           ]
         );
 
-      if (!enrollmentResult.rows.length) {
+      if (
+        !enrollmentResult.rows.length
+      ) {
         return res.status(403).json({
           error:
             "You are not enrolled/accepted under this faculty.",
@@ -391,7 +484,7 @@ router.get(
           ]
         );
 
-      res.json(
+      return res.json(
         result.rows || []
       );
     } catch (err) {
@@ -400,7 +493,7 @@ router.get(
         err.message
       );
 
-      res.status(500).json({
+      return res.status(500).json({
         error:
           "Failed to load assignments.",
       });
@@ -411,6 +504,13 @@ router.get(
 // ============================================================
 // 5A. PROTECTED QUESTION PAPER VIEW
 // ============================================================
+//
+// Question papers are now stored in the private Supabase
+// Storage bucket: questions.
+//
+// The student must be authenticated and accepted under the
+// faculty before the file can be downloaded.
+//
 
 router.get(
   "/assignments/:assignmentId/question-paper",
@@ -470,7 +570,8 @@ router.get(
       const enrollmentResult =
         await db.query(
           `
-          SELECT id
+          SELECT
+            id
           FROM enrollments
           WHERE student_id = $1
             AND faculty_id = $2
@@ -493,7 +594,7 @@ router.get(
       }
 
       // ------------------------------------------------------
-      // Check question paper exists
+      // Check question paper
       // ------------------------------------------------------
 
       if (
@@ -506,89 +607,63 @@ router.get(
       }
 
       // ------------------------------------------------------
-      // Safe filename
+      // Supabase Storage path
+      //
+      // New records store the complete storage path.
+      //
+      // For older records, only the filename may exist.
+      // Supabase root paths also accept that format.
       // ------------------------------------------------------
 
-      const safeFileName =
-        path.basename(
+      const storagePath =
+        String(
           assignment.question_file
-        );
+        ).trim();
 
-      const questionPaperPath =
-        path.join(
-          __dirname,
-          "..",
-          "uploads",
-          "questions",
-          safeFileName
-        );
-
-      // ------------------------------------------------------
-      // Check physical file
-      // ------------------------------------------------------
-
-      if (
-        !fs.existsSync(
-          questionPaperPath
-        )
-      ) {
-        console.error(
-          "Question paper missing:",
-          questionPaperPath
-        );
-
+      if (!storagePath) {
         return res.status(404).json({
           error:
-            "Question paper file not found on server.",
+            "Question paper storage path is empty.",
         });
       }
 
       // ------------------------------------------------------
-      // Determine MIME type
+      // Download from private Supabase bucket
       // ------------------------------------------------------
 
-      const extension =
-        path.extname(
-          safeFileName
-        ).toLowerCase();
+      const buffer =
+        await downloadFromSupabase(
+          BUCKETS.questions,
+          storagePath
+        );
 
-      const mimeTypes = {
-        ".pdf":
-          "application/pdf",
+      const fileName =
+        assignment.question_original ||
+        path.basename(
+          storagePath
+        );
 
-        ".doc":
-          "application/msword",
-
-        ".docx":
-          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-
-        ".txt":
-          "text/plain",
-
-        ".png":
-          "image/png",
-
-        ".jpg":
-          "image/jpeg",
-
-        ".jpeg":
-          "image/jpeg",
-      };
-
-      const contentType =
-        mimeTypes[extension] ||
-        "application/octet-stream";
+      // ------------------------------------------------------
+      // Response headers
+      // ------------------------------------------------------
 
       res.setHeader(
         "Content-Type",
-        contentType
+        getMimeType(fileName)
+      );
+
+      res.setHeader(
+        "Content-Length",
+        buffer.length
       );
 
       res.setHeader(
         "Content-Disposition",
-        `inline; filename="${encodeURIComponent(
-          assignment.question_original ||
-          safeFileName
+        `inline; filename="${String(
+          fileName
+        ).replace(
+          /["\r\n]/g,
+          "_"
         )}"`
       );
 
@@ -597,25 +672,9 @@ router.get(
         "private, no-store"
       );
 
-      return res.sendFile(
-        questionPaperPath,
-        (err) => {
-          if (err) {
-            console.error(
-              "QUESTION PAPER SEND ERROR:",
-              err.message
-            );
-
-            if (!res.headersSent) {
-              return res.status(500).json({
-                error:
-                  "Could not open question paper.",
-              });
-            }
-          }
-        }
+      return res.send(
+        buffer
       );
-
     } catch (err) {
       console.error(
         "VIEW QUESTION PAPER ERROR:",
@@ -635,10 +694,23 @@ router.get(
 // ============================================================
 // 6. SUBMIT ASSIGNMENT
 // ============================================================
+//
+// Student file:
+//
+// Browser
+//    ↓
+// Multer memoryStorage
+//    ↓
+// Supabase Storage: answers bucket
+//    ↓
+// PostgreSQL stores storage path
+//
+// Render's temporary filesystem is NOT used.
+//
 
 router.post(
   "/assignments/:assignmentId/submit",
-  upload.single("file"),
+  uploadAnswer,
   async (req, res) => {
     if (!req.file) {
       return res.status(400).json({
@@ -647,7 +719,14 @@ router.post(
       });
     }
 
+    let uploadedStoragePath =
+      null;
+
     try {
+      // ------------------------------------------------------
+      // Get assignment
+      // ------------------------------------------------------
+
       const assignmentResult =
         await db.query(
           `
@@ -663,9 +742,8 @@ router.post(
       if (
         !assignmentResult.rows.length
       ) {
-        fs.unlink(
-          req.file.path,
-          () => {}
+        removeLocalFile(
+          req.file
         );
 
         return res.status(404).json({
@@ -677,14 +755,20 @@ router.post(
       const assignment =
         assignmentResult.rows[0];
 
+      // ------------------------------------------------------
+      // Check accepted enrollment
+      // ------------------------------------------------------
+
       const enrollmentResult =
         await db.query(
           `
-          SELECT id
+          SELECT
+            id
           FROM enrollments
           WHERE student_id = $1
             AND faculty_id = $2
             AND status = 'accepted'
+          LIMIT 1
           `,
           [
             req.user.id,
@@ -695,9 +779,8 @@ router.post(
       if (
         !enrollmentResult.rows.length
       ) {
-        fs.unlink(
-          req.file.path,
-          () => {}
+        removeLocalFile(
+          req.file
         );
 
         return res.status(403).json({
@@ -706,18 +789,22 @@ router.post(
         });
       }
 
+      // ------------------------------------------------------
+      // Check deadline
+      // ------------------------------------------------------
+
       const dueTime =
         assignment.due_time ||
         "23:59:59";
 
       const dueDate =
-        assignment.due_date
-          .toISOString
+        assignment.due_date &&
+        assignment.due_date.toISOString
           ? assignment.due_date
               .toISOString()
               .split("T")[0]
           : String(
-              assignment.due_date
+              assignment.due_date || ""
             ).split("T")[0];
 
       const dueMs =
@@ -729,13 +816,12 @@ router.post(
         assignment.closed === true ||
         assignment.closed === 1 ||
         (
-          !isNaN(dueMs) &&
+          !Number.isNaN(dueMs) &&
           dueMs < Date.now()
         )
       ) {
-        fs.unlink(
-          req.file.path,
-          () => {}
+        removeLocalFile(
+          req.file
         );
 
         return res.status(400).json({
@@ -744,10 +830,15 @@ router.post(
         });
       }
 
+      // ------------------------------------------------------
+      // Check duplicate submission
+      // ------------------------------------------------------
+
       const existingResult =
         await db.query(
           `
-          SELECT id
+          SELECT
+            id
           FROM submissions
           WHERE assignment_id = $1
             AND student_id = $2
@@ -761,9 +852,8 @@ router.post(
       if (
         existingResult.rows.length
       ) {
-        fs.unlink(
-          req.file.path,
-          () => {}
+        removeLocalFile(
+          req.file
         );
 
         return res.status(400).json({
@@ -771,6 +861,23 @@ router.post(
             "Assignment already submitted. Use modify to replace.",
         });
       }
+
+      // ------------------------------------------------------
+      // Upload to Supabase Storage
+      // ------------------------------------------------------
+
+      const storageResult =
+        await uploadToSupabase(
+          req.file,
+          BUCKETS.answers
+        );
+
+      uploadedStoragePath =
+        storageResult.path;
+
+      // ------------------------------------------------------
+      // Save storage path in database
+      // ------------------------------------------------------
 
       await db.query(
         `
@@ -796,21 +903,40 @@ router.post(
         [
           assignment.id,
           req.user.id,
-          req.file.filename,
+          storageResult.path,
           req.file.originalname,
-          req.file.size || 0,
+          storageResult.size,
         ]
       );
 
-      res.json({
+      return res.json({
         message:
           "Submission uploaded successfully.",
       });
-
     } catch (err) {
-      fs.unlink(
-        req.file.path,
-        () => {}
+      // ------------------------------------------------------
+      // If database insertion failed after Storage upload,
+      // remove the orphaned Storage object.
+      // ------------------------------------------------------
+
+      if (
+        uploadedStoragePath
+      ) {
+        try {
+          await deleteFromSupabase(
+            BUCKETS.answers,
+            uploadedStoragePath
+          );
+        } catch (deleteError) {
+          console.error(
+            "CLEANUP ANSWER FILE ERROR:",
+            deleteError.message
+          );
+        }
+      }
+
+      removeLocalFile(
+        req.file
       );
 
       console.error(
@@ -818,9 +944,10 @@ router.post(
         err.message
       );
 
-      res.status(500).json({
+      return res.status(500).json({
         error:
-          "Failed to submit assignment.",
+          "Failed to submit assignment: " +
+          err.message,
       });
     }
   }
@@ -830,19 +957,13 @@ router.post(
 // 7. REQUEST MODIFY OTP
 // ============================================================
 //
-// FIXED:
-// This route now actually sends the OTP email.
-// Previously it only generated/saved the OTP.
-// ============================================================
+// Sends OTP to student's registered email.
+//
 
 router.post(
   "/submissions/:submissionId/request-modify-otp",
   async (req, res) => {
     try {
-      // ------------------------------------------------------
-      // Get submission + student's email
-      // ------------------------------------------------------
-
       const result =
         await db.query(
           `
@@ -864,7 +985,9 @@ router.post(
           ]
         );
 
-      if (!result.rows.length) {
+      if (
+        !result.rows.length
+      ) {
         return res.status(404).json({
           error:
             "Submission not found.",
@@ -874,13 +997,11 @@ router.post(
       const student =
         result.rows[0];
 
-      // ------------------------------------------------------
-      // Check registered email
-      // ------------------------------------------------------
-
       if (
         !student.email ||
-        !String(student.email).trim()
+        !String(
+          student.email
+        ).trim()
       ) {
         return res.status(400).json({
           error:
@@ -889,7 +1010,7 @@ router.post(
       }
 
       // ------------------------------------------------------
-      // Generate 6 digit OTP
+      // Generate OTP
       // ------------------------------------------------------
 
       const otp =
@@ -900,7 +1021,7 @@ router.post(
         ).toString();
 
       // ------------------------------------------------------
-      // OTP expires after 10 minutes
+      // Expiry: 10 minutes
       // ------------------------------------------------------
 
       const expiresAt =
@@ -910,7 +1031,7 @@ router.post(
         );
 
       // ------------------------------------------------------
-      // Save OTP in users table
+      // Save OTP
       // ------------------------------------------------------
 
       await db.query(
@@ -929,31 +1050,27 @@ router.post(
       );
 
       // ------------------------------------------------------
-      // SEND EMAIL
+      // Send OTP email
       // ------------------------------------------------------
 
       await sendOtpEmail(
         student.email,
-        otp
+        otp,
+        "modify_submission"
       );
 
       console.log(
         `[OTP] Modification OTP sent to ${student.email}`
       );
 
-      // ------------------------------------------------------
-      // Success response
-      // ------------------------------------------------------
-
       return res.json({
         message:
           "OTP sent to your registered email address.",
       });
-
     } catch (err) {
       console.error(
         "MODIFICATION OTP ERROR:",
-        err
+        err.message
       );
 
       return res.status(500).json({
@@ -967,10 +1084,14 @@ router.post(
 // ============================================================
 // 8. MODIFY / REPLACE SUBMISSION
 // ============================================================
+//
+// New file is uploaded to Supabase Storage.
+// Old file is deleted after the new database record is saved.
+//
 
 router.post(
   "/submissions/:submissionId/modify",
-  upload.single("file"),
+  uploadAnswer,
   async (req, res) => {
     if (!req.file) {
       return res.status(400).json({
@@ -984,9 +1105,12 @@ router.post(
         req.body.emailOtp || ""
       ).trim();
 
+    let newStoragePath =
+      null;
+
     try {
       // ------------------------------------------------------
-      // Get OTP
+      // Get user OTP
       // ------------------------------------------------------
 
       const userResult =
@@ -1004,9 +1128,8 @@ router.post(
       if (
         !userResult.rows.length
       ) {
-        fs.unlink(
-          req.file.path,
-          () => {}
+        removeLocalFile(
+          req.file
         );
 
         return res.status(404).json({
@@ -1019,16 +1142,16 @@ router.post(
         userResult.rows[0];
 
       // ------------------------------------------------------
-      // Check OTP
+      // Validate OTP
       // ------------------------------------------------------
 
       if (
         !user.email_otp ||
-        user.email_otp !== emailOtp
+        user.email_otp !==
+          emailOtp
       ) {
-        fs.unlink(
-          req.file.path,
-          () => {}
+        removeLocalFile(
+          req.file
         );
 
         return res.status(400).json({
@@ -1038,7 +1161,7 @@ router.post(
       }
 
       // ------------------------------------------------------
-      // Check OTP expiry
+      // Check expiry
       // ------------------------------------------------------
 
       if (
@@ -1048,9 +1171,8 @@ router.post(
         ).getTime() <
           Date.now()
       ) {
-        fs.unlink(
-          req.file.path,
-          () => {}
+        removeLocalFile(
+          req.file
         );
 
         return res.status(400).json({
@@ -1060,7 +1182,7 @@ router.post(
       }
 
       // ------------------------------------------------------
-      // Verify submission belongs to student
+      // Find submission
       // ------------------------------------------------------
 
       const submissionResult =
@@ -1069,6 +1191,7 @@ router.post(
           SELECT
             s.id,
             s.assignment_id,
+            s.file_path,
             a.due_date,
             a.due_time,
             a.closed
@@ -1087,9 +1210,8 @@ router.post(
       if (
         !submissionResult.rows.length
       ) {
-        fs.unlink(
-          req.file.path,
-          () => {}
+        removeLocalFile(
+          req.file
         );
 
         return res.status(404).json({
@@ -1101,6 +1223,13 @@ router.post(
       const submission =
         submissionResult.rows[0];
 
+      const oldStoragePath =
+        submission.file_path
+          ? String(
+              submission.file_path
+            ).trim()
+          : null;
+
       // ------------------------------------------------------
       // Check deadline
       // ------------------------------------------------------
@@ -1110,13 +1239,14 @@ router.post(
         "23:59:59";
 
       const dueDate =
-        submission.due_date
-          .toISOString
+        submission.due_date &&
+        submission.due_date.toISOString
           ? submission.due_date
               .toISOString()
               .split("T")[0]
           : String(
-              submission.due_date
+              submission.due_date ||
+                ""
             ).split("T")[0];
 
       const dueMs =
@@ -1128,13 +1258,12 @@ router.post(
         submission.closed === true ||
         submission.closed === 1 ||
         (
-          !isNaN(dueMs) &&
+          !Number.isNaN(dueMs) &&
           dueMs < Date.now()
         )
       ) {
-        fs.unlink(
-          req.file.path,
-          () => {}
+        removeLocalFile(
+          req.file
         );
 
         return res.status(400).json({
@@ -1144,7 +1273,20 @@ router.post(
       }
 
       // ------------------------------------------------------
-      // Replace submission
+      // Upload NEW file first
+      // ------------------------------------------------------
+
+      const storageResult =
+        await uploadToSupabase(
+          req.file,
+          BUCKETS.answers
+        );
+
+      newStoragePath =
+        storageResult.path;
+
+      // ------------------------------------------------------
+      // Update database
       // ------------------------------------------------------
 
       await db.query(
@@ -1167,19 +1309,44 @@ router.post(
 
           final_marks = NULL,
           auto_marks = NULL,
-          auto_feedback = NULL
+          auto_feedback = NULL,
+
+          similarity_pct = NULL,
+          duplicate_flag = FALSE
 
         WHERE id = $4
           AND student_id = $5
         `,
         [
-          req.file.filename,
+          storageResult.path,
           req.file.originalname,
-          req.file.size || 0,
+          storageResult.size,
           req.params.submissionId,
           req.user.id,
         ]
       );
+
+      // ------------------------------------------------------
+      // Delete OLD file after successful DB update
+      // ------------------------------------------------------
+
+      if (
+        oldStoragePath &&
+        oldStoragePath !==
+          newStoragePath
+      ) {
+        try {
+          await deleteFromSupabase(
+            BUCKETS.answers,
+            oldStoragePath
+          );
+        } catch (deleteError) {
+          console.warn(
+            "OLD ANSWER FILE DELETE WARNING:",
+            deleteError.message
+          );
+        }
+      }
 
       // ------------------------------------------------------
       // Consume OTP
@@ -1200,11 +1367,30 @@ router.post(
         message:
           "Submission updated successfully.",
       });
-
     } catch (err) {
-      fs.unlink(
-        req.file.path,
-        () => {}
+      // ------------------------------------------------------
+      // Remove newly uploaded file if something failed
+      // before the operation completed.
+      // ------------------------------------------------------
+
+      if (
+        newStoragePath
+      ) {
+        try {
+          await deleteFromSupabase(
+            BUCKETS.answers,
+            newStoragePath
+          );
+        } catch (deleteError) {
+          console.error(
+            "NEW FILE CLEANUP ERROR:",
+            deleteError.message
+          );
+        }
+      }
+
+      removeLocalFile(
+        req.file
       );
 
       console.error(
@@ -1214,7 +1400,8 @@ router.post(
 
       return res.status(500).json({
         error:
-          "Failed to replace submission.",
+          "Failed to replace submission: " +
+          err.message,
       });
     }
   }
@@ -1247,17 +1434,16 @@ router.get(
           [req.user.id]
         );
 
-      res.json(
+      return res.json(
         result.rows || []
       );
-
     } catch (err) {
       console.error(
         "Student /my-courses error:",
         err.message
       );
 
-      res.status(500).json({
+      return res.status(500).json({
         error:
           "Failed to load courses.",
       });
@@ -1296,17 +1482,16 @@ router.get(
           [req.user.id]
         );
 
-      res.json(
+      return res.json(
         result.rows || []
       );
-
     } catch (err) {
       console.error(
         "Student /marks error:",
         err.message
       );
 
-      res.status(500).json({
+      return res.status(500).json({
         error:
           "Failed to load marks.",
       });
@@ -1360,17 +1545,16 @@ router.get(
           [req.user.id]
         );
 
-      res.json(
+      return res.json(
         result.rows || []
       );
-
     } catch (err) {
       console.error(
         "Student /exams error:",
         err.message
       );
 
-      res.status(500).json({
+      return res.status(500).json({
         error:
           "Failed to load exams.",
       });

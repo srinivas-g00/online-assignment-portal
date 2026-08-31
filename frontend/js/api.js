@@ -1,19 +1,26 @@
 // frontend/js/api.js
+// Shared API wrapper + UI helpers
+// Works on localhost and Render.
+//
+// IMPORTANT:
+// This file uses the SAME ORIGIN as the current website.
+// Therefore:
+// Local  -> http://localhost:5000
+// Online -> https://online-assignment-portal-wa8o.onrender.com
+//
+// Do NOT hard-code localhost or the Render URL here.
+
 (function () {
   "use strict";
 
   // ============================================================
   // API BASE
   // ============================================================
-  // Same origin:
-  // Local  -> http://localhost:5000
-  // Render -> https://online-assignment-portal-wa8o.onrender.com
-  //
-  // DO NOT put localhost here.
+
   const API_BASE = window.location.origin;
 
   // ============================================================
-  // TOKEN
+  // GET TOKEN
   // ============================================================
 
   function getToken() {
@@ -31,18 +38,33 @@
   // ============================================================
 
   function setSession(token, user) {
-    if (!token) return;
+    if (!token) {
+      console.warn("setSession called without token.");
+      return;
+    }
 
-    localStorage.setItem("oa_token", token);
+    const safeUser = user || {};
+
+    // Main session keys
     localStorage.setItem(
-      "oa_user",
-      JSON.stringify(user || {})
+      "oa_token",
+      token
     );
 
-    localStorage.setItem("aop_token", token);
+    localStorage.setItem(
+      "oa_user",
+      JSON.stringify(safeUser)
+    );
+
+    // Backward-compatible keys
+    localStorage.setItem(
+      "aop_token",
+      token
+    );
+
     localStorage.setItem(
       "aop_user",
-      JSON.stringify(user || {})
+      JSON.stringify(safeUser)
     );
   }
 
@@ -58,14 +80,17 @@
         localStorage.getItem("aop_user") ||
         sessionStorage.getItem("aop_user");
 
-      return raw
-        ? JSON.parse(raw)
-        : null;
+      if (!raw) {
+        return null;
+      }
+
+      return JSON.parse(raw);
     } catch (err) {
       console.error(
         "GET USER ERROR:",
         err.message
       );
+
       return null;
     }
   }
@@ -77,38 +102,41 @@
   function clearSession() {
     localStorage.removeItem("oa_token");
     localStorage.removeItem("oa_user");
-    localStorage.removeItem("aop_token");
-    localStorage.removeItem("aop_user");
 
     sessionStorage.removeItem("oa_token");
     sessionStorage.removeItem("oa_user");
+
+    localStorage.removeItem("aop_token");
+    localStorage.removeItem("aop_user");
+
     sessionStorage.removeItem("aop_token");
     sessionStorage.removeItem("aop_user");
   }
 
   // ============================================================
-  // NORMALIZE PATH
+  // NORMALIZE API PATH
   // ============================================================
 
-  function normalizePath(apiPath) {
-    if (!apiPath) {
+  function normalizePath(value) {
+    if (!value) {
       return "/";
     }
 
-    const value =
-      String(apiPath).trim();
+    const path =
+      String(value).trim();
 
-    // Already a full URL
+    // Keep absolute URLs unchanged
     if (
-      value.startsWith("http://") ||
-      value.startsWith("https://")
+      path.startsWith("http://") ||
+      path.startsWith("https://")
     ) {
-      return value;
+      return path;
     }
 
-    return value.startsWith("/")
-      ? value
-      : "/" + value;
+    // Make relative API path start with /
+    return path.startsWith("/")
+      ? path
+      : "/" + path;
   }
 
   // ============================================================
@@ -116,7 +144,7 @@
   // ============================================================
 
   async function api(
-    apiPath,
+    path,
     {
       method = "GET",
       body,
@@ -125,7 +153,7 @@
     } = {}
   ) {
     const requestPath =
-      normalizePath(apiPath);
+      normalizePath(path);
 
     const url =
       requestPath.startsWith("http://") ||
@@ -136,7 +164,7 @@
     const headers = {};
 
     // ----------------------------------------------------------
-    // Authorization
+    // AUTHORIZATION HEADER
     // ----------------------------------------------------------
 
     const token = getToken();
@@ -147,8 +175,10 @@
     }
 
     // ----------------------------------------------------------
-    // JSON
+    // JSON HEADER
     // ----------------------------------------------------------
+    // Do NOT manually set Content-Type for FormData.
+    // The browser adds the multipart boundary automatically.
 
     if (
       !isForm &&
@@ -161,33 +191,43 @@
 
     let response;
 
-    try {
-      response = await fetch(url, {
-        method,
-        headers,
-        body: isForm
-          ? body
-          : body !== undefined &&
-            body !== null
-          ? JSON.stringify(body)
-          : undefined,
+    // ==========================================================
+    // FETCH
+    // ==========================================================
 
-        credentials: "same-origin",
-      });
+    try {
+      response = await fetch(
+        url,
+        {
+          method,
+          headers,
+
+          body:
+            isForm
+              ? body
+              : body !== undefined &&
+                body !== null
+              ? JSON.stringify(body)
+              : undefined,
+
+          // Same-origin cookies can be used later if required.
+          credentials: "same-origin",
+        }
+      );
     } catch (err) {
       console.error(
-        "NETWORK ERROR:",
+        "API NETWORK ERROR:",
         err
       );
 
       throw new Error(
-        "Unable to connect to the server."
+        "Unable to connect to the server. Please check your internet connection."
       );
     }
 
-    // ----------------------------------------------------------
-    // Parse response
-    // ----------------------------------------------------------
+    // ==========================================================
+    // RESPONSE
+    // ==========================================================
 
     let data = null;
 
@@ -208,11 +248,12 @@
         const text =
           await response.text();
 
-        data = text
-          ? {
-              message: text,
-            }
-          : null;
+        data =
+          text
+            ? {
+                message: text,
+              }
+            : null;
       }
     } catch (err) {
       console.warn(
@@ -221,34 +262,51 @@
       );
     }
 
-    // ----------------------------------------------------------
-    // Handle errors
-    // ----------------------------------------------------------
+    // ==========================================================
+    // ERROR HANDLING
+    // ==========================================================
 
     if (!response.ok) {
+      // --------------------------------------------------------
+      // Unauthorized
+      // --------------------------------------------------------
+
       if (
         response.status === 401
       ) {
         clearSession();
 
-        const path =
-          window.location.pathname;
+        const currentPath =
+          window.location.pathname
+            .toLowerCase();
 
-        const onLoginPage =
-          path === "/" ||
-          path.endsWith(
+        const isLoginPage =
+          currentPath === "/" ||
+          currentPath.endsWith(
             "/index.html"
           );
 
-        if (!onLoginPage) {
+        if (!isLoginPage) {
           window.location.href =
             "/index.html";
         }
       }
 
+      // --------------------------------------------------------
+      // Get server error message
+      // --------------------------------------------------------
+
+      const serverMessage =
+        data &&
+        typeof data === "object"
+          ? (
+              data.error ||
+              data.message
+            )
+          : null;
+
       throw new Error(
-        (data && data.error) ||
-          (data && data.message) ||
+        serverMessage ||
           `Request failed (${response.status})`
       );
     }
@@ -257,7 +315,7 @@
   }
 
   // ============================================================
-  // NOTICE
+  // NOTICE POPUP
   // ============================================================
 
   function notice(
@@ -272,7 +330,11 @@
 
     root.innerHTML = `
       <div class="notice-bg">
-        <div class="notice ${kind}">
+
+        <div class="notice ${escapeHtml(
+          kind
+        )}">
+
           <div class="icon">
             ${
               kind === "err"
@@ -295,7 +357,9 @@
             type="button">
             OK
           </button>
+
         </div>
+
       </div>
     `;
 
@@ -305,14 +369,15 @@
       );
 
     if (closeButton) {
-      closeButton.onclick = () => {
-        root.innerHTML = "";
-      };
+      closeButton.onclick =
+        function () {
+          root.innerHTML = "";
+        };
     }
   }
 
   // ============================================================
-  // MODAL
+  // GENERIC MODAL
   // ============================================================
 
   function openModal(
@@ -326,6 +391,7 @@
 
     root.innerHTML = `
       <div class="modal-bg">
+
         <div class="modal">
 
           <h3>
@@ -350,6 +416,7 @@
           </div>
 
         </div>
+
       </div>
     `;
 
@@ -388,19 +455,23 @@
       value ?? ""
     ).replace(
       /[&<>"']/g,
-      (c) =>
-        ({
-          "&": "&amp;",
-          "<": "&lt;",
-          ">": "&gt;",
-          '"': "&quot;",
-          "'": "&#39;",
-        }[c])
+      function (character) {
+        return (
+          {
+            "&": "&amp;",
+            "<": "&lt;",
+            ">": "&gt;",
+            '"': "&quot;",
+            "'": "&#39;",
+          }[character] ||
+          character
+        );
+      }
     );
   }
 
   // ============================================================
-  // DATE/TIME
+  // FORMAT DATE / TIME
   // ============================================================
 
   function fmtDateTime(value) {
@@ -435,17 +506,46 @@
   function requireLogin(
     expectedRole
   ) {
-    const user = getUser();
-    const token = getToken();
+    const user =
+      getUser();
+
+    const token =
+      getToken();
+
+    // ----------------------------------------------------------
+    // No token
+    // ----------------------------------------------------------
+
+    if (!token) {
+      window.location.href =
+        "/index.html";
+
+      return null;
+    }
+
+    // ----------------------------------------------------------
+    // No user
+    // ----------------------------------------------------------
+
+    if (!user) {
+      clearSession();
+
+      window.location.href =
+        "/index.html";
+
+      return null;
+    }
+
+    // ----------------------------------------------------------
+    // Wrong role
+    // ----------------------------------------------------------
 
     if (
-      !token ||
-      !user ||
-      (
-        expectedRole &&
-        user.role !== expectedRole
-      )
+      expectedRole &&
+      user.role !== expectedRole
     ) {
+      clearSession();
+
       window.location.href =
         "/index.html";
 
@@ -467,7 +567,7 @@
   }
 
   // ============================================================
-  // EXPORT GLOBAL FUNCTIONS
+  // EXPORT FUNCTIONS GLOBALLY
   // ============================================================
 
   window.API_BASE =
@@ -508,5 +608,4 @@
 
   window.logout =
     logout;
-
 })();

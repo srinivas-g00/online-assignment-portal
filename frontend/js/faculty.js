@@ -1,11 +1,14 @@
 // frontend/js/faculty.js
 
 (function () {
+  "use strict";
+
   const user = requireLogin("faculty");
 
   if (!user) return;
 
-  const $ = (id) => document.getElementById(id);
+  const $ = (id) =>
+    document.getElementById(id);
 
   let questionRowCount = 0;
 
@@ -13,47 +16,66 @@
   // NAVIGATION TABS
   // ============================================================
 
-  document.querySelectorAll(".tabs button").forEach((btn) => {
-    btn.onclick = () => {
-      document
-        .querySelectorAll(".tabs button")
-        .forEach((b) => b.classList.remove("active"));
+  document
+    .querySelectorAll(".tabs button")
+    .forEach((btn) => {
+      btn.onclick = () => {
+        document
+          .querySelectorAll(".tabs button")
+          .forEach((b) =>
+            b.classList.remove("active")
+          );
 
-      btn.classList.add("active");
+        btn.classList.add("active");
 
-      [
-        "requests",
-        "assignments",
-        "newAssignment",
-        "exams",
-        "newExam",
-      ].forEach((tab) => {
-        const el = $(`tab-${tab}`);
+        [
+          "requests",
+          "assignments",
+          "newAssignment",
+          "exams",
+          "newExam",
+        ].forEach((tab) => {
+          const el =
+            $(`tab-${tab}`);
 
-        if (el) {
-          el.classList.add("hidden");
+          if (el) {
+            el.classList.add(
+              "hidden"
+            );
+          }
+        });
+
+        const activeTab =
+          $(`tab-${btn.dataset.tab}`);
+
+        if (activeTab) {
+          activeTab.classList.remove(
+            "hidden"
+          );
         }
-      });
 
-      const activeTab = $(`tab-${btn.dataset.tab}`);
+        if (
+          btn.dataset.tab ===
+          "requests"
+        ) {
+          loadRequests();
+        }
 
-      if (activeTab) {
-        activeTab.classList.remove("hidden");
-      }
+        if (
+          btn.dataset.tab ===
+          "assignments"
+        ) {
+          loadAssignments();
+        }
 
-      if (btn.dataset.tab === "requests") {
-        loadRequests();
-      }
-
-      if (btn.dataset.tab === "assignments") {
-        loadAssignments();
-      }
-
-      if (btn.dataset.tab === "exams") {
-        loadExams();
-      }
-    };
-  });
+        if (
+          btn.dataset.tab ===
+          "exams"
+        ) {
+          loadExams();
+        }
+      };
+    });
 
   // ============================================================
   // INITIALIZATION
@@ -61,25 +83,34 @@
 
   async function init() {
     try {
-      const me = await api("/api/faculty/me");
+      const me =
+        await api(
+          "/api/faculty/me"
+        );
 
       if ($("facName")) {
         $("facName").textContent =
-          me.name || user.name || "Faculty";
+          me.name ||
+          user.name ||
+          "Faculty";
       }
 
       if ($("facSubject")) {
         $("facSubject").textContent =
-          (me.subject || "Subject not set") +
-          (me.slot ? " · " + me.slot : "");
+          (me.subject ||
+            "Subject not set") +
+          (me.slot
+            ? " · " + me.slot
+            : "");
       }
 
       if ($("avatarInitial")) {
-        $("avatarInitial").textContent = (
-          me.name ||
-          user.name ||
-          "F"
-        )[0].toUpperCase();
+        $("avatarInitial").textContent =
+          (
+            me.name ||
+            user.name ||
+            "F"
+          )[0].toUpperCase();
       }
 
       await loadRequests();
@@ -101,73 +132,107 @@
 
   async function loadRequests() {
     try {
-      const rows = await api(
-        "/api/faculty/students?status=pending"
-      );
+      const rows =
+        await api(
+          "/api/faculty/students?status=pending"
+        );
 
-      const listEl = $("requestsList");
+      const listEl =
+        $("requestsList");
 
       if (!listEl) return;
 
-      if (!rows || !rows.length) {
+      if (
+        !rows ||
+        !rows.length
+      ) {
         listEl.innerHTML =
           `<div class="empty">No pending registration requests.</div>`;
 
         return;
       }
 
-      listEl.innerHTML = rows
-        .map(
-          (r) => `
-            <div class="mini-card">
-              <h4>${escapeHtml(r.name)}</h4>
+      listEl.innerHTML =
+        rows
+          .map(
+            (r) => `
+              <div class="mini-card">
 
-              <p>
-                @${escapeHtml(r.username)}
-                ${r.branch
-                  ? " · " + escapeHtml(r.branch)
-                  : ""}
-                ${r.year
-                  ? " · " + escapeHtml(r.year)
-                  : ""}
-              </p>
+                <h4>
+                  ${escapeHtml(
+                    r.name
+                  )}
+                </h4>
 
-              <div class="row-buttons">
-                <button
-                  class="btn success"
-                  data-accept="${r.enrollment_id}"
-                  type="button">
-                  Accept
-                </button>
+                <p>
+                  @${escapeHtml(
+                    r.username
+                  )}
 
-                <button
-                  class="btn danger"
-                  data-reject="${r.enrollment_id}"
-                  type="button">
-                  Reject
-                </button>
+                  ${
+                    r.branch
+                      ? " · " +
+                        escapeHtml(
+                          r.branch
+                        )
+                      : ""
+                  }
+
+                  ${
+                    r.year
+                      ? " · " +
+                        escapeHtml(
+                          r.year
+                        )
+                      : ""
+                  }
+                </p>
+
+                <div class="row-buttons">
+
+                  <button
+                    class="btn success"
+                    data-accept="${r.enrollment_id}"
+                    type="button">
+                    Accept
+                  </button>
+
+                  <button
+                    class="btn danger"
+                    data-reject="${r.enrollment_id}"
+                    type="button">
+                    Reject
+                  </button>
+
+                </div>
+
               </div>
-            </div>
-          `
-        )
-        .join("");
+            `
+          )
+          .join("");
 
       document
-        .querySelectorAll("[data-accept]")
+        .querySelectorAll(
+          "[data-accept]"
+        )
         .forEach((button) => {
           button.onclick = () =>
             decide(
-              button.dataset.accept,
+              button.dataset
+                .accept,
               "accepted"
             );
         });
 
       document
-        .querySelectorAll("[data-reject]")
+        .querySelectorAll(
+          "[data-reject]"
+        )
         .forEach((button) => {
           button.onclick = () =>
             decide(
-              button.dataset.reject,
+              button.dataset
+                .reject,
               "rejected"
             );
         });
@@ -203,7 +268,8 @@
     } catch (err) {
       notice(
         "Failed",
-        err.message || "Could not update request.",
+        err.message ||
+          "Could not update request.",
         "err"
       );
     }
@@ -213,20 +279,27 @@
   // POST ASSIGNMENT
   // ============================================================
 
-  if ($("postAssignmentBtn")) {
+  if (
+    $("postAssignmentBtn")
+  ) {
     $("postAssignmentBtn").onclick =
       async () => {
         const title =
-          $("newTitle").value.trim();
+          $("newTitle")
+            .value
+            .trim();
 
         const totalMarks =
-          $("newTotalMarks").value;
+          $("newTotalMarks")
+            .value;
 
         const dueDate =
-          $("newDueDate").value;
+          $("newDueDate")
+            .value;
 
         const dueTime =
-          $("newDueTime").value;
+          $("newDueTime")
+            .value;
 
         if (
           !title ||
@@ -241,13 +314,19 @@
           );
         }
 
-        const fd = new FormData();
+        const fd =
+          new FormData();
 
-        fd.append("title", title);
+        fd.append(
+          "title",
+          title
+        );
 
         fd.append(
           "description",
-          $("newDesc").value.trim()
+          $("newDesc")
+            .value
+            .trim()
         );
 
         fd.append(
@@ -271,7 +350,8 @@
         ) {
           fd.append(
             "questionFile",
-            $("newQFile").files[0]
+            $("newQFile")
+              .files[0]
           );
         }
 
@@ -290,18 +370,23 @@
             "Assignment posted to your enrolled students."
           );
 
-          $("newTitle").value = "";
-          $("newDesc").value = "";
+          $("newTitle").value =
+            "";
+
+          $("newDesc").value =
+            "";
 
           if ($("newQFile")) {
-            $("newQFile").value = "";
+            $("newQFile").value =
+              "";
           }
 
           await loadAssignments();
         } catch (err) {
           notice(
             "Failed",
-            err.message || "Could not post assignment.",
+            err.message ||
+              "Could not post assignment.",
             "err"
           );
         }
@@ -314,16 +399,20 @@
 
   async function loadAssignments() {
     try {
-      const rows = await api(
-        "/api/faculty/assignments"
-      );
+      const rows =
+        await api(
+          "/api/faculty/assignments"
+        );
 
       const listEl =
         $("assignmentsList");
 
       if (!listEl) return;
 
-      if (!rows || !rows.length) {
+      if (
+        !rows ||
+        !rows.length
+      ) {
         listEl.innerHTML =
           `<div class="empty">You haven't posted any assignments yet.</div>`;
 
@@ -332,6 +421,7 @@
 
       listEl.innerHTML = `
         <table>
+
           <thead>
             <tr>
               <th>Title</th>
@@ -343,23 +433,33 @@
           </thead>
 
           <tbody>
+
             ${rows
               .map((a) => {
                 const timePart =
                   (
                     a.due_time ||
                     "23:59:59"
-                  ).slice(0, 8);
+                  ).slice(
+                    0,
+                    8
+                  );
 
                 const datePart =
                   String(
-                    a.due_date || ""
+                    a.due_date ||
+                      ""
                   )
-                    .split("T")[0]
-                    .split(" ")[0];
+                    .split(
+                      "T"
+                    )[0]
+                    .split(
+                      " "
+                    )[0];
 
                 return `
                   <tr>
+
                     <td>
                       <b>
                         ${escapeHtml(
@@ -396,27 +496,37 @@
                     </td>
 
                     <td>
+
                       <button
                         class="btn secondary"
                         data-open="${a.id}"
                         type="button">
+
                         Open
+
                       </button>
+
                     </td>
+
                   </tr>
                 `;
               })
               .join("")}
+
           </tbody>
+
         </table>
       `;
 
       document
-        .querySelectorAll("[data-open]")
+        .querySelectorAll(
+          "[data-open]"
+        )
         .forEach((button) => {
           button.onclick = () =>
             openAssignment(
-              button.dataset.open
+              button.dataset
+                .open
             );
         });
     } catch (err) {
@@ -431,7 +541,9 @@
   // OPEN ASSIGNMENT
   // ============================================================
 
-  async function openAssignment(id) {
+  async function openAssignment(
+    id
+  ) {
     try {
       const response =
         await api(
@@ -442,43 +554,72 @@
         response.assignment;
 
       const submissions =
-        response.submissions || [];
+        response.submissions ||
+        [];
 
-      if ($("assignmentDetailWrap")) {
-        $("assignmentDetailWrap").classList.remove(
-          "hidden"
-        );
+      if (
+        $("assignmentDetailWrap")
+      ) {
+        $("assignmentDetailWrap")
+          .classList.remove(
+            "hidden"
+          );
       }
 
-      if (!$("assignmentDetail")) return;
+      if (
+        !$("assignmentDetail")
+      ) {
+        return;
+      }
 
       const timePart =
         (
           a.due_time ||
           "23:59:59"
-        ).slice(0, 8);
+        ).slice(
+          0,
+          8
+        );
 
       const datePart =
         String(
-          a.due_date || ""
+          a.due_date ||
+            ""
         )
-          .split("T")[0]
-          .split(" ")[0];
+          .split(
+            "T"
+          )[0]
+          .split(
+            " "
+          )[0];
 
       const qFileName =
         (
           a.question_file ||
           ""
-        ).split(/[/\\]/).pop();
+        )
+          .split(
+            /[/\\]/
+          )
+          .pop();
 
       const duplicateList =
         submissions.filter(
-          (s) => s.duplicate_flag
+          (s) =>
+            s.duplicate_flag
         );
 
-      $("assignmentDetail").innerHTML = `
+      // ========================================================
+      // ASSIGNMENT DETAIL HTML
+      // ========================================================
+
+      $("assignmentDetail")
+        .innerHTML = `
+
         <h2>
-          ${escapeHtml(a.title)}
+          ${escapeHtml(
+            a.title
+          )}
         </h2>
 
         <p>
@@ -488,32 +629,60 @@
         </p>
 
         <p>
+
           <span class="pill">
-            Total: ${a.total_marks}
+            Total:
+            ${a.total_marks}
           </span>
 
           <span class="pill deadline">
             Due:
-            ${escapeHtml(datePart)}
-            ${escapeHtml(timePart)}
+            ${escapeHtml(
+              datePart
+            )}
+            ${escapeHtml(
+              timePart
+            )}
           </span>
+
         </p>
 
         ${
           a.question_file
             ? `
-              <div style="margin:10px 0;">
+              <div
+                style="
+                  margin:10px 0;
+                  padding:10px;
+                  background:#f8fafc;
+                  border:1px solid #e2e8f0;
+                  border-radius:8px;
+                ">
+
                 <a
-                href="/uploads/questions/${encodeURIComponent(qFileName)}"
+                  href="/api/faculty/assignments/${encodeURIComponent(
+                    a.id
                   )}/question-paper"
                   target="_blank"
-                  style="color:#4f46e5;font-weight:600;text-decoration:underline;">
+                  rel="noopener noreferrer"
+                  style="
+                    color:#4f46e5;
+                    font-weight:600;
+                    text-decoration:underline;
+                  ">
+
                   📄 View Question Paper
-                  (${escapeHtml(
-                    a.question_original ||
-                      qFileName
-                  )})
+
+                  ${
+                    a.question_original
+                      ? `(${escapeHtml(
+                          a.question_original
+                        )})`
+                      : ""
+                  }
+
                 </a>
+
               </div>
             `
             : ""
@@ -534,6 +703,7 @@
           </h4>
 
           <div class="field">
+
             <label>
               Answer key
               (text / keywords / rubric)
@@ -544,9 +714,11 @@
               rows="3">${escapeHtml(
                 a.answer_key || ""
               )}</textarea>
+
           </div>
 
           <div class="field">
+
             <label>
               Or upload an answer-key document
             </label>
@@ -554,6 +726,7 @@
             <input
               type="file"
               id="keyFile">
+
           </div>
 
           <div
@@ -561,6 +734,7 @@
             style="margin-top:10px;">
 
             <div class="field">
+
               <label>
                 Match % to get Full Marks
               </label>
@@ -571,9 +745,11 @@
                 value="70"
                 min="1"
                 max="100">
+
             </div>
 
             <div class="field">
+
               <label>
                 Marks to deduct for Duplicates
               </label>
@@ -584,7 +760,9 @@
                 value="5"
                 min="0"
                 max="${a.total_marks}">
+
             </div>
+
           </div>
 
           <div
@@ -595,27 +773,36 @@
               class="btn secondary"
               id="saveKeyBtn"
               type="button">
+
               Save answer key
+
             </button>
 
             <button
               class="btn"
               id="runCorrectionBtn"
               type="button">
+
               Run auto-correction
+
             </button>
+
           </div>
+
         </div>
 
         <h3>
-          Submissions (${submissions.length})
+          Submissions
+          (${submissions.length})
         </h3>
 
         ${
           submissions.length
             ? `
               <table>
+
                 <thead>
+
                   <tr>
                     <th>Student</th>
                     <th>File</th>
@@ -625,136 +812,205 @@
                     <th>AI Feedback</th>
                     <th>Action</th>
                   </tr>
+
                 </thead>
 
                 <tbody>
+
                   ${submissions
-                    .map((s) => {
-                      const fileName =
-                        (
-                          s.file_path ||
-                          ""
-                        )
-                          .split(/[/\\]/)
-                          .pop();
+                    .map(
+                      (s) => {
+                        const fileName =
+                          (
+                            s.file_path ||
+                            ""
+                          )
+                            .split(
+                              /[/\\]/
+                            )
+                            .pop();
 
-                      const displayName =
-                        s.file_original ||
-                        fileName ||
-                        "Submission File";
+                        const displayName =
+                          s.file_original ||
+                          fileName ||
+                          "Submission File";
 
-                      return `
-                        <tr>
-                          <td>
-                            <b>
-                              ${escapeHtml(
-                                s.student_name
-                              )}
-                            </b>
-                            <br>
-                            <small>
-                              @${escapeHtml(
-                                s.student_username
-                              )}
-                            </small>
-                          </td>
+                        const hasMarks =
+                          s.final_marks !==
+                            null &&
+                          s.final_marks !==
+                            undefined;
 
-                          <td>
-                            ${escapeHtml(
-                              displayName
-                            )}
-                          </td>
+                        return `
+                          <tr>
 
-                          <td>
-                            ${fmtDateTime(
-                              s.submitted_at
-                            )}
-                          </td>
+                            <td>
 
-                          <td>
-                            <b>
+                              <b>
+                                ${escapeHtml(
+                                  s.student_name ||
+                                    "Unknown Student"
+                                )}
+                              </b>
+
+                              <br>
+
+                              <small>
+                                @${escapeHtml(
+                                  s.student_username ||
+                                    ""
+                                )}
+                              </small>
+
+                            </td>
+
+                            <td>
+
                               ${
-                                s.similarity_pct != null
-                                  ? s.similarity_pct +
-                                    "%"
-                                  : "—"
-                              }
-                            </b>
-                          </td>
+                                s.file_path
+                                  ? `
+                                    <a
+                                      href="/api/faculty/submissions/${encodeURIComponent(
+                                        s.id
+                                      )}/file"
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      style="
+                                        color:#4f46e5;
+                                        font-weight:600;
+                                        text-decoration:underline;
+                                      ">
 
-                          <td>
-                            <span class="marks">
-                              ${
-                                s.final_marks == null
-                                  ? "—"
-                                  : s.final_marks +
-                                    "/" +
-                                    a.total_marks
-                              }
-                            </span>
+                                      📄
+                                      ${escapeHtml(
+                                        displayName
+                                      )}
 
-                            <br>
-
-                            <small>
-                              ${
-                                s.posted
-                                  ? "Posted"
-                                  : "Not posted"
-                              }
-                            </small>
-                          </td>
-
-                          <td>
-                            <small>
-                              ${
-                                s.auto_feedback
-                                  ? escapeHtml(
-                                      s.auto_feedback
+                                    </a>
+                                  `
+                                  : escapeHtml(
+                                      displayName
                                     )
-                                  : "—"
                               }
-                            </small>
-                          </td>
 
-                          <td>
-                            <div class="row-buttons">
+                            </td>
 
-                              <button
-                                class="btn secondary"
-                                data-edit="${s.id}"
-                                type="button">
-                                Change marks
-                              </button>
+                            <td>
+                              ${fmtDateTime(
+                                s.submitted_at
+                              )}
+                            </td>
 
-                              <button
-                                class="btn ${
-                                  s.posted
-                                    ? "secondary"
-                                    : "success"
-                                }"
-                                data-post="${s.id}"
+                            <td>
+
+                              <b>
                                 ${
-                                  s.final_marks == null
-                                    ? "disabled"
-                                    : ""
+                                  s.similarity_pct !=
+                                    null
+                                    ? s.similarity_pct +
+                                      "%"
+                                    : "—"
                                 }
-                                type="button">
+                              </b>
+
+                            </td>
+
+                            <td>
+
+                              <span
+                                class="marks"
+                                style="font-weight:700;">
 
                                 ${
-                                  s.posted
+                                  hasMarks
+                                    ? `${s.final_marks}/${a.total_marks}`
+                                    : "—"
+                                }
+
+                              </span>
+
+                              <br>
+
+                              <small>
+                                ${
+                                  Number(
+                                    s.posted
+                                  ) === 1
                                     ? "Posted"
-                                    : "Post marks"
+                                    : "Not posted"
                                 }
+                              </small>
 
-                              </button>
+                            </td>
 
-                            </div>
-                          </td>
-                        </tr>
-                      `;
-                    })
+                            <td>
+
+                              <small>
+                                ${
+                                  s.auto_feedback
+                                    ? escapeHtml(
+                                        s.auto_feedback
+                                      )
+                                    : "—"
+                                }
+                              </small>
+
+                            </td>
+
+                            <td>
+
+                              <div class="row-buttons">
+
+                                <button
+                                  class="btn secondary"
+                                  data-edit="${s.id}"
+                                  type="button">
+
+                                  Change marks
+
+                                </button>
+
+                                <button
+                                  class="btn ${
+                                    Number(
+                                      s.posted
+                                    ) === 1
+                                      ? "secondary"
+                                      : "success"
+                                  }"
+                                  data-post="${s.id}"
+                                  ${
+                                    !hasMarks ||
+                                    Number(
+                                      s.posted
+                                    ) === 1
+                                      ? "disabled"
+                                      : ""
+                                  }
+                                  type="button">
+
+                                  ${
+                                    Number(
+                                      s.posted
+                                    ) === 1
+                                      ? "Posted"
+                                      : "Post marks"
+                                  }
+
+                                </button>
+
+                              </div>
+
+                            </td>
+
+                          </tr>
+                        `;
+                      }
+                    )
                     .join("")}
+
                 </tbody>
+
               </table>
             `
             : `
@@ -784,6 +1040,7 @@
                 </p>
 
                 <ul>
+
                   ${duplicateList
                     .map(
                       (d) => `
@@ -797,16 +1054,18 @@
                       `
                     )
                     .join("")}
+
                 </ul>
+
               </div>
             `
             : ""
         }
       `;
 
-      // --------------------------------------------------------
+      // ========================================================
       // SAVE ANSWER KEY
-      // --------------------------------------------------------
+      // ========================================================
 
       if ($("saveKeyBtn")) {
         $("saveKeyBtn").onclick =
@@ -816,7 +1075,9 @@
 
             fd.append(
               "keyText",
-              $("keyText").value.trim()
+              $("keyText")
+                .value
+                .trim()
             );
 
             if (
@@ -825,7 +1086,8 @@
             ) {
               fd.append(
                 "keyFile",
-                $("keyFile").files[0]
+                $("keyFile")
+                  .files[0]
               );
             }
 
@@ -841,36 +1103,46 @@
 
               notice(
                 "Saved",
-                "Answer key saved."
+                "Answer key saved successfully."
+              );
+
+              await openAssignment(
+                id
               );
             } catch (err) {
               notice(
                 "Failed",
-                err.message,
+                err.message ||
+                  "Could not save answer key.",
                 "err"
               );
             }
           };
       }
 
-      // --------------------------------------------------------
+      // ========================================================
       // AUTO CORRECTION
-      // --------------------------------------------------------
+      // ========================================================
 
-      if ($("runCorrectionBtn")) {
+      if (
+        $("runCorrectionBtn")
+      ) {
         $("runCorrectionBtn").onclick =
           async () => {
             try {
               const matchThreshold =
-                $("matchThreshold").value;
+                $("matchThreshold")
+                  .value;
 
               const penaltyMarks =
-                $("duplicatePenalty").value;
+                $("duplicatePenalty")
+                  .value;
 
               await api(
                 `/api/faculty/assignments/${id}/auto-correct`,
                 {
-                  method: "POST",
+                  method:
+                    "POST",
                   body: {
                     matchThreshold,
                     penaltyMarks,
@@ -883,20 +1155,23 @@
                 "Duplicates analyzed and marks updated."
               );
 
-              await openAssignment(id);
+              await openAssignment(
+                id
+              );
             } catch (err) {
               notice(
                 "Failed",
-                err.message,
+                err.message ||
+                  "Auto-correction failed.",
                 "err"
               );
             }
           };
       }
 
-      // --------------------------------------------------------
+      // ========================================================
       // EDIT ASSIGNMENT MARKS
-      // --------------------------------------------------------
+      // ========================================================
 
       document
         .querySelectorAll(
@@ -905,15 +1180,16 @@
         .forEach((button) => {
           button.onclick = () =>
             editMarks(
-              button.dataset.edit,
+              button.dataset
+                .edit,
               a,
               id
             );
         });
 
-      // --------------------------------------------------------
+      // ========================================================
       // POST ASSIGNMENT MARKS
-      // --------------------------------------------------------
+      // ========================================================
 
       document
         .querySelectorAll(
@@ -922,14 +1198,16 @@
         .forEach((button) => {
           button.onclick = () =>
             postMarks(
-              button.dataset.post,
+              button.dataset
+                .post,
               id
             );
         });
     } catch (err) {
       notice(
         "Error loading assignment",
-        err.message,
+        err.message ||
+          "Could not load assignment.",
         "err"
       );
     }
@@ -948,29 +1226,61 @@
       "Change marks",
       `
         <div class="field">
+
           <label>
             New marks
-            (out of ${assignment.total_marks})
+            (out of ${
+              assignment.total_marks
+            })
           </label>
 
           <input
             id="marksInput"
             type="number"
             min="0"
-            max="${assignment.total_marks}">
+            max="${
+              assignment.total_marks
+            }"
+            step="1">
+
         </div>
 
         <button
           class="btn"
           id="saveMarksBtn"
           type="button">
+
           Save
+
         </button>
       `
     );
 
     $("saveMarksBtn").onclick =
       async () => {
+        const marksValue =
+          Number(
+            $("marksInput")
+              .value
+          );
+
+        if (
+          Number.isNaN(
+            marksValue
+          ) ||
+          marksValue < 0 ||
+          marksValue >
+            Number(
+              assignment.total_marks
+            )
+        ) {
+          return notice(
+            "Invalid marks",
+            `Enter a value between 0 and ${assignment.total_marks}.`,
+            "err"
+          );
+        }
+
         try {
           await api(
             `/api/faculty/submissions/${subId}/marks`,
@@ -978,7 +1288,7 @@
               method: "PUT",
               body: {
                 marks:
-                  $("marksInput").value,
+                  marksValue,
               },
             }
           );
@@ -996,7 +1306,8 @@
         } catch (err) {
           notice(
             "Failed",
-            err.message,
+            err.message ||
+              "Could not update marks.",
             "err"
           );
         }
@@ -1030,7 +1341,8 @@
     } catch (err) {
       notice(
         "Failed",
-        err.message,
+        err.message ||
+          "Could not post marks.",
         "err"
       );
     }
@@ -1052,7 +1364,10 @@
 
       if (!listEl) return;
 
-      if (!rows || !rows.length) {
+      if (
+        !rows ||
+        !rows.length
+      ) {
         listEl.innerHTML =
           `<div class="empty">
              You haven't created any exams yet.
@@ -1063,7 +1378,9 @@
 
       listEl.innerHTML = `
         <table>
+
           <thead>
+
             <tr>
               <th>Title</th>
               <th>Date/Time</th>
@@ -1071,23 +1388,33 @@
               <th>Total</th>
               <th></th>
             </tr>
+
           </thead>
 
           <tbody>
+
             ${rows
               .map((exam) => {
                 const examDate =
                   String(
-                    exam.exam_date || ""
-                  ).split("T")[0];
+                    exam.exam_date ||
+                      ""
+                  ).split(
+                    "T"
+                  )[0];
 
                 const startTime =
                   String(
-                    exam.start_time || ""
-                  ).slice(0, 8);
+                    exam.start_time ||
+                      ""
+                  ).slice(
+                    0,
+                    8
+                  );
 
                 return `
                   <tr>
+
                     <td>
                       <b>
                         ${escapeHtml(
@@ -1123,18 +1450,25 @@
                     </td>
 
                     <td>
+
                       <button
                         class="btn secondary"
                         data-results="${exam.id}"
                         type="button">
+
                         Results
+
                       </button>
+
                     </td>
+
                   </tr>
                 `;
               })
               .join("")}
+
           </tbody>
+
         </table>
       `;
 
@@ -1145,7 +1479,8 @@
         .forEach((button) => {
           button.onclick = () =>
             openResults(
-              button.dataset.results
+              button.dataset
+                .results
             );
         });
     } catch (err) {
@@ -1182,9 +1517,10 @@
         response.results || [];
 
       if ($("examResultsWrap")) {
-        $("examResultsWrap").classList.remove(
-          "hidden"
-        );
+        $("examResultsWrap")
+          .classList.remove(
+            "hidden"
+          );
       }
 
       if (!$("examResults")) {
@@ -1192,24 +1528,29 @@
       }
 
       // --------------------------------------------------------
-      // BUILD RESULT TABLE
+      // NO RESULTS
       // --------------------------------------------------------
 
       if (!results.length) {
-        $("examResults").innerHTML = `
-          <h2>
-            ${escapeHtml(
-              exam.title
-            )} - Results
-          </h2>
+        $("examResults")
+          .innerHTML = `
+            <h2>
+              ${escapeHtml(
+                exam.title
+              )} - Results
+            </h2>
 
-          <div class="empty">
-            No students have attempted this exam yet.
-          </div>
-        `;
+            <div class="empty">
+              No students have attempted this exam yet.
+            </div>
+          `;
 
         return;
       }
+
+      // --------------------------------------------------------
+      // RESULT TABLE
+      // --------------------------------------------------------
 
       $("examResults").innerHTML = `
         <h2>
@@ -1225,12 +1566,23 @@
           border-radius:8px;
           border:1px solid #e2e8f0;
         ">
-          <b>Total Marks:</b>
-          ${Number(exam.total_marks) || 0}
+
+          <b>
+            Total Marks:
+          </b>
+
+          ${
+            Number(
+              exam.total_marks
+            ) || 0
+          }
+
         </div>
 
         <table>
+
           <thead>
+
             <tr>
               <th>Student</th>
               <th>Submitted</th>
@@ -1239,29 +1591,35 @@
               <th>Status</th>
               <th>Action</th>
             </tr>
+
           </thead>
 
           <tbody>
+
             ${results
               .map((r) => {
-                /*
-                 * IMPORTANT:
-                 *
-                 * score === null means the backend did
-                 * not calculate/store the score.
-                 *
-                 * score === 0 is a valid score and MUST
-                 * NOT be treated as null.
-                 */
-
                 const hasScore =
-                  r.score !== null &&
-                  r.score !== undefined &&
-                  r.score !== "";
+                  r.score !==
+                    null &&
+                  r.score !==
+                    undefined &&
+                  r.score !==
+                    "";
 
-                const score =
+                const numericScore =
                   hasScore
-                    ? Number(r.score)
+                    ? Number(
+                        r.score
+                      )
+                    : null;
+
+                const safeScore =
+                  numericScore !==
+                    null &&
+                  !Number.isNaN(
+                    numericScore
+                  )
+                    ? numericScore
                     : null;
 
                 const total =
@@ -1269,16 +1627,16 @@
                     exam.total_marks
                   ) || 0;
 
-                const safeScore =
-                  score !== null &&
-                  !Number.isNaN(score)
-                    ? score
-                    : null;
+                const posted =
+                  Number(
+                    r.posted
+                  ) === 1;
 
                 return `
                   <tr>
 
                     <td>
+
                       <b>
                         ${escapeHtml(
                           r.student_name ||
@@ -1294,9 +1652,11 @@
                             ""
                         )}
                       </small>
+
                     </td>
 
                     <td>
+
                       ${
                         r.submitted_at
                           ? fmtDateTime(
@@ -1304,41 +1664,52 @@
                             )
                           : "Not submitted"
                       }
+
                     </td>
 
                     <td>
+
                       ${
                         r.auto_submitted
                           ? "Yes (timer)"
                           : "No"
                       }
+
                     </td>
 
                     <td>
+
                       <span
                         class="marks"
                         style="font-weight:700;">
 
                         ${
-                          safeScore !== null
+                          safeScore !==
+                            null
                             ? `${safeScore}/${total}`
                             : "Not graded"
                         }
 
                       </span>
+
                     </td>
 
                     <td>
+
                       <small>
+
                         ${
-                          r.posted
+                          posted
                             ? "Posted to student"
                             : "Not posted"
                         }
+
                       </small>
+
                     </td>
 
                     <td>
+
                       <div class="row-buttons">
 
                         <button
@@ -1347,25 +1718,27 @@
                           type="button">
 
                           Edit
+
                         </button>
 
                         <button
                           class="btn ${
-                            r.posted
+                            posted
                               ? "secondary"
                               : "success"
                           }"
                           data-postscore="${r.id}"
                           ${
-                            safeScore === null ||
-                            r.posted
+                            safeScore ===
+                              null ||
+                            posted
                               ? "disabled"
                               : ""
                           }
                           type="button">
 
                           ${
-                            r.posted
+                            posted
                               ? "Posted"
                               : "Post"
                           }
@@ -1373,19 +1746,22 @@
                         </button>
 
                       </div>
+
                     </td>
 
                   </tr>
                 `;
               })
               .join("")}
+
           </tbody>
+
         </table>
       `;
 
-      // --------------------------------------------------------
-      // EDIT SCORE BUTTONS
-      // --------------------------------------------------------
+      // ========================================================
+      // EDIT SCORE
+      // ========================================================
 
       $("examResults")
         .querySelectorAll(
@@ -1395,26 +1771,28 @@
           const result =
             results.find(
               (r) =>
-                String(r.id) ===
+                String(
+                  r.id
+                ) ===
                 String(
                   button.dataset
                     .editscore
                 )
             );
 
-          button.onclick = () => {
+          button.onclick = () =>
             editScore(
-              button.dataset.editscore,
+              button.dataset
+                .editscore,
               exam,
               examId,
               result
             );
-          };
         });
 
-      // --------------------------------------------------------
-      // POST SCORE BUTTONS
-      // --------------------------------------------------------
+      // ========================================================
+      // POST SCORE
+      // ========================================================
 
       $("examResults")
         .querySelectorAll(
@@ -1434,7 +1812,8 @@
                 await api(
                   `/api/faculty/exam-attempts/${attemptId}/post`,
                   {
-                    method: "POST",
+                    method:
+                      "POST",
                   }
                 );
 
@@ -1491,8 +1870,10 @@
 
     const currentScore =
       result &&
-      result.score !== null &&
-      result.score !== undefined
+      result.score !==
+        null &&
+      result.score !==
+        undefined
         ? result.score
         : "";
 
@@ -1513,6 +1894,7 @@
             max="${totalMarks}"
             step="1"
             value="${currentScore}">
+
         </div>
 
         <button
@@ -1521,6 +1903,7 @@
           type="button">
 
           Save Score
+
         </button>
       `
     );
@@ -1529,7 +1912,8 @@
       async () => {
         const scoreValue =
           Number(
-            $("scoreInput").value
+            $("scoreInput")
+              .value
           );
 
         if (
@@ -1537,7 +1921,8 @@
             scoreValue
           ) ||
           scoreValue < 0 ||
-          scoreValue > totalMarks
+          scoreValue >
+            totalMarks
         ) {
           return notice(
             "Invalid score",
@@ -1550,9 +1935,12 @@
           await api(
             `/api/faculty/exam-attempts/${attemptId}/score`,
             {
-              method: "PUT",
+              method:
+                "PUT",
+
               body: {
-                score: scoreValue,
+                score:
+                  scoreValue,
               },
             }
           );
@@ -1584,7 +1972,8 @@
 
   if ($("addQuestionBtn")) {
     $("addQuestionBtn").onclick =
-      () => addQuestionRow();
+      () =>
+        addQuestionRow();
   }
 
   function addQuestionRow() {
@@ -1606,6 +1995,7 @@
 
     div.innerHTML = `
       <div class="field">
+
         <label>
           Question ${n}
         </label>
@@ -1613,11 +2003,13 @@
         <input
           class="q-text"
           type="text">
+
       </div>
 
       <div class="two-col">
 
         <div class="field">
+
           <label>
             Option A
           </label>
@@ -1625,9 +2017,11 @@
           <input
             class="q-a"
             type="text">
+
         </div>
 
         <div class="field">
+
           <label>
             Option B
           </label>
@@ -1635,6 +2029,7 @@
           <input
             class="q-b"
             type="text">
+
         </div>
 
       </div>
@@ -1642,6 +2037,7 @@
       <div class="two-col">
 
         <div class="field">
+
           <label>
             Option C
           </label>
@@ -1649,9 +2045,11 @@
           <input
             class="q-c"
             type="text">
+
         </div>
 
         <div class="field">
+
           <label>
             Option D
           </label>
@@ -1659,6 +2057,7 @@
           <input
             class="q-d"
             type="text">
+
         </div>
 
       </div>
@@ -1666,6 +2065,7 @@
       <div class="two-col">
 
         <div class="field">
+
           <label>
             Correct option
           </label>
@@ -1690,9 +2090,11 @@
             </option>
 
           </select>
+
         </div>
 
         <div class="field">
+
           <label>
             Marks
           </label>
@@ -1702,6 +2104,7 @@
             type="number"
             value="1"
             min="1">
+
         </div>
 
       </div>
@@ -1711,17 +2114,24 @@
         type="button"
         onclick="
           document
-            .getElementById('q-${n}')
+            .getElementById(
+              'q-${n}'
+            )
             .remove()
         ">
 
         Remove question
+
       </button>
     `;
 
-    if ($("questionsWrap")) {
+    if (
       $("questionsWrap")
-        .appendChild(div);
+    ) {
+      $("questionsWrap")
+        .appendChild(
+          div
+        );
     }
   }
 
@@ -1738,13 +2148,16 @@
             .trim();
 
         const examDate =
-          $("examDate").value;
+          $("examDate")
+            .value;
 
         const startTime =
-          $("examStart").value;
+          $("examStart")
+            .value;
 
         const durationMin =
-          $("examDuration").value;
+          $("examDuration")
+            .value;
 
         if (
           !title ||
@@ -1759,69 +2172,91 @@
           );
         }
 
-        const questions = [];
+        const questions =
+          [];
 
         document
           .querySelectorAll(
             "#questionsWrap .mini-card"
           )
-          .forEach((card) => {
-            questions.push({
-              questionText:
-                card
-                  .querySelector(
-                    ".q-text"
-                  )
-                  .value
-                  .trim(),
+          .forEach(
+            (card) => {
+              const textInput =
+                card.querySelector(
+                  ".q-text"
+                );
 
-              optionA:
-                card
-                  .querySelector(
-                    ".q-a"
-                  )
-                  .value
-                  .trim(),
+              const optionA =
+                card.querySelector(
+                  ".q-a"
+                );
 
-              optionB:
-                card
-                  .querySelector(
-                    ".q-b"
-                  )
-                  .value
-                  .trim(),
+              const optionB =
+                card.querySelector(
+                  ".q-b"
+                );
 
-              optionC:
-                card
-                  .querySelector(
-                    ".q-c"
-                  )
-                  .value
-                  .trim(),
+              const optionC =
+                card.querySelector(
+                  ".q-c"
+                );
 
-              optionD:
-                card
-                  .querySelector(
-                    ".q-d"
-                  )
-                  .value
-                  .trim(),
+              const optionD =
+                card.querySelector(
+                  ".q-d"
+                );
 
-              correctOption:
-                card
-                  .querySelector(
-                    ".q-correct"
-                  )
-                  .value,
+              const correct =
+                card.querySelector(
+                  ".q-correct"
+                );
 
-              marks:
-                card
-                  .querySelector(
-                    ".q-marks"
-                  )
-                  .value,
-            });
-          });
+              const marks =
+                card.querySelector(
+                  ".q-marks"
+                );
+
+              if (
+                !textInput ||
+                !optionA ||
+                !optionB ||
+                !optionC ||
+                !optionD ||
+                !correct ||
+                !marks
+              ) {
+                return;
+              }
+
+              questions.push({
+                questionText:
+                  textInput.value
+                    .trim(),
+
+                optionA:
+                  optionA.value
+                    .trim(),
+
+                optionB:
+                  optionB.value
+                    .trim(),
+
+                optionC:
+                  optionC.value
+                    .trim(),
+
+                optionD:
+                  optionD.value
+                    .trim(),
+
+                correctOption:
+                  correct.value,
+
+                marks:
+                  marks.value,
+              });
+            }
+          );
 
         if (
           !questions.length ||
@@ -1845,7 +2280,9 @@
           await api(
             "/api/faculty/exams",
             {
-              method: "POST",
+              method:
+                "POST",
+
               body: {
                 title,
                 examDate,
@@ -1861,8 +2298,11 @@
             "The MCQ exam was created for students accepted under you."
           );
 
-          if ($("questionsWrap")) {
-            $("questionsWrap").innerHTML =
+          if (
+            $("questionsWrap")
+          ) {
+            $("questionsWrap")
+              .innerHTML =
               "";
           }
 
@@ -1871,7 +2311,8 @@
 
           addQuestionRow();
 
-          $("examTitle").value =
+          $("examTitle")
+            .value =
             "";
 
           await loadExams();

@@ -5,53 +5,45 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
-const fs = require("fs");
 
-require("./config/db"); // Supabase PostgreSQL pool
+require("./config/db");
 
 const authRoutes = require("./routes/authRoutes");
 const studentRoutes = require("./routes/studentRoutes");
 const facultyRoutes = require("./routes/facultyRoutes");
 const examRoutes = require("./routes/examRoutes");
-
 const scheduler = require("./jobs/scheduler");
 
 const app = express();
 
 // =====================================================
-// 1. CREATE REQUIRED UPLOAD FOLDERS
+// 1. PORT
 // =====================================================
 
-const uploadDirs = [
-  "answers",
-  "questions",
-  "keys",
-];
-
-uploadDirs.forEach((dir) => {
-  const fullPath = path.join(
-    __dirname,
-    "uploads",
-    dir
-  );
-
-  if (!fs.existsSync(fullPath)) {
-    fs.mkdirSync(fullPath, {
-      recursive: true,
-    });
-  }
-});
+const PORT =
+  Number(process.env.PORT) || 5000;
 
 // =====================================================
 // 2. CORS
 // =====================================================
+//
+// Same-origin deployment on Render does not require CORS,
+// but keeping it enabled makes local development easier.
+//
+// FRONTEND_URL example:
+// https://your-app.onrender.com
+//
+// For local development:
+// http://localhost:5000
+//
+
+const allowedOrigin =
+  process.env.FRONTEND_URL ||
+  `http://localhost:${PORT}`;
 
 app.use(
   cors({
-    origin:
-      process.env.FRONTEND_URL ||
-      "http://localhost:5000",
-
+    origin: allowedOrigin,
     credentials: true,
   })
 );
@@ -60,57 +52,72 @@ app.use(
 // 3. BODY PARSING
 // =====================================================
 
-app.use(express.json());
+app.use(
+  express.json({
+    limit: "2mb",
+  })
+);
 
 app.use(
   express.urlencoded({
     extended: true,
+    limit: "2mb",
   })
 );
 
 // =====================================================
-// 4. SERVE UPLOADED FILES
+// 4. BASIC SECURITY / CACHE HEADERS
+// =====================================================
+
+app.disable("x-powered-by");
+
+app.use(
+  (req, res, next) => {
+    res.setHeader(
+      "X-Content-Type-Options",
+      "nosniff"
+    );
+
+    res.setHeader(
+      "X-Frame-Options",
+      "SAMEORIGIN"
+    );
+
+    next();
+  }
+);
+
+// =====================================================
+// 5. FRONTEND PATH
+// =====================================================
+
+const frontendPath =
+  path.join(
+    __dirname,
+    "..",
+    "frontend"
+  );
+
+// =====================================================
+// 6. SERVE FRONTEND
 // =====================================================
 //
-// IMPORTANT:
-// This MUST come BEFORE the frontend fallback.
-//
-// This allows:
-// /uploads/questions/file.pdf
-// /uploads/questions/file.docx
-// /uploads/answers/file.pdf
-// /uploads/keys/file.pdf
-//
-// to access the actual uploaded files instead of
-// receiving index.html.
+// The frontend is committed to Git and can therefore be
+// served normally by the Render web service.
 //
 
 app.use(
-  "/uploads",
   express.static(
-    path.join(
-      __dirname,
-      "uploads"
-    )
+    frontendPath,
+    {
+      index: false,
+      maxAge: "1h",
+    }
   )
 );
 
 // =====================================================
-// 5. SERVE FRONTEND
-// =====================================================
-
-const frontendPath = path.join(
-  __dirname,
-  "..",
-  "frontend"
-);
-
-app.use(
-  express.static(frontendPath)
-);
-
-// =====================================================
-// 6. API ROUTES
+// 7. API ROUTES
 // =====================================================
 
 app.use(
@@ -134,32 +141,43 @@ app.use(
 );
 
 // =====================================================
-// 7. HEALTH CHECK
+// 8. HEALTH CHECK
 // =====================================================
 
-app.get("/api/health", (req, res) => {
-  res.json({
-    ok: true,
-    time: new Date().toISOString(),
-  });
-});
+app.get(
+  "/api/health",
+  (req, res) => {
+    return res.status(200).json({
+      ok: true,
+      service:
+        "Online Assignment Portal",
+      time:
+        new Date().toISOString(),
+      environment:
+        process.env.NODE_ENV ||
+        "development",
+    });
+  }
+);
 
 // =====================================================
-// 8. FRONTEND FALLBACK
+// 9. FRONTEND FALLBACK
 // =====================================================
 //
 // IMPORTANT:
-// Do NOT send index.html for /uploads requests.
 //
-// /uploads has already been handled above.
+// Do NOT return index.html for API requests.
 //
-// Only normal frontend pages should reach this.
+// API errors should remain JSON.
+//
+// Only normal browser page requests should reach
+// the frontend fallback.
 //
 
 app.get(
-  /^\/(?!api(?:\/|$)|uploads(?:\/|$)).*/,
+  /^\/(?!api(?:\/|$)).*$/,
   (req, res) => {
-    res.sendFile(
+    return res.sendFile(
       path.join(
         frontendPath,
         "index.html"
@@ -169,7 +187,21 @@ app.get(
 );
 
 // =====================================================
-// 9. CENTRAL ERROR HANDLER
+// 10. 404 FOR UNKNOWN API ROUTES
+// =====================================================
+
+app.use(
+  "/api",
+  (req, res) => {
+    return res.status(404).json({
+      error:
+        "API endpoint not found.",
+    });
+  }
+);
+
+// =====================================================
+// 11. CENTRAL ERROR HANDLER
 // =====================================================
 
 app.use(
@@ -179,49 +211,207 @@ app.use(
     res,
     next
   ) => {
-    const maxMb =
-      process.env.MAX_UPLOAD_MB ||
-      5;
+    console.error(
+      "================================================"
+    );
 
+    console.error(
+      "[SERVER ERROR]"
+    );
+
+    console.error(
+      "Method:",
+      req.method
+    );
+
+    console.error(
+      "Path:",
+      req.path
+    );
+
+    console.error(
+      "Error:",
+      err &&
+        (err.message ||
+          err)
+    );
+
+    console.error(
+      "================================================"
+    );
+
+    // -------------------------------------------------
     // Multer file-size error
+    // -------------------------------------------------
+
     if (
       err &&
       err.code ===
         "LIMIT_FILE_SIZE"
     ) {
+      const maxMb =
+        Number(
+          process.env.MAX_UPLOAD_MB
+        ) || 5;
+
       return res.status(400).json({
         error:
           `File is too large. Maximum allowed size is ${maxMb}MB.`,
       });
     }
 
-    console.error(
-      "Server error:",
-      err.message || err
-    );
+    // -------------------------------------------------
+    // Malformed JSON
+    // -------------------------------------------------
 
-    res.status(500).json({
+    if (
+      err &&
+      (
+        err.type ===
+          "entity.parse.failed" ||
+        err instanceof
+          SyntaxError
+      )
+    ) {
+      return res.status(400).json({
+        error:
+          "Invalid JSON request.",
+      });
+    }
+
+    // -------------------------------------------------
+    // Default error
+    // -------------------------------------------------
+
+    return res.status(500).json({
       error:
-        "Something went wrong on the server.",
+        process.env.NODE_ENV ===
+        "production"
+          ? "Something went wrong on the server."
+          : (
+              err &&
+              err.message
+            ) ||
+            "Something went wrong on the server.",
     });
   }
 );
 
 // =====================================================
-// 10. START SERVER
+// 12. START SERVER
 // =====================================================
 
-const PORT =
-  process.env.PORT || 5000;
+const server =
+  app.listen(
+    PORT,
+    "0.0.0.0",
+    () => {
+      console.log(
+        "================================================"
+      );
 
-app.listen(
-  PORT,
-  "0.0.0.0",
-  () => {
-    console.log(
-      `Online Assignment Portal running on port ${PORT}`
+      console.log(
+        "Online Assignment Portal"
+      );
+
+      console.log(
+        `Server running on port ${PORT}`
+      );
+
+      console.log(
+        `Environment: ${
+          process.env.NODE_ENV ||
+          "development"
+        }`
+      );
+
+      console.log(
+        "================================================"
+      );
+
+      // -------------------------------------------------
+      // Start scheduler
+      // -------------------------------------------------
+
+      try {
+        if (
+          scheduler &&
+          typeof scheduler.start ===
+            "function"
+        ) {
+          scheduler.start();
+
+          console.log(
+            "[Scheduler] Started successfully."
+          );
+        } else {
+          console.warn(
+            "[Scheduler] start() not available."
+          );
+        }
+      } catch (schedulerError) {
+        console.error(
+          "[Scheduler] Failed to start:",
+          schedulerError.message
+        );
+      }
+    }
+  );
+
+// =====================================================
+// 13. GRACEFUL SHUTDOWN
+// =====================================================
+
+function shutdown(
+  signal
+) {
+  console.log(
+    `[Server] ${signal} received. Shutting down...`
+  );
+
+  server.close(
+    () => {
+      console.log(
+        "[Server] HTTP server closed."
+      );
+
+      process.exit(0);
+    }
+  );
+}
+
+process.on(
+  "SIGTERM",
+  () =>
+    shutdown("SIGTERM")
+);
+
+process.on(
+  "SIGINT",
+  () =>
+    shutdown("SIGINT")
+);
+
+// =====================================================
+// 14. UNHANDLED ERRORS
+// =====================================================
+
+process.on(
+  "unhandledRejection",
+  (reason) => {
+    console.error(
+      "[UNHANDLED REJECTION]",
+      reason
     );
+  }
+);
 
-    scheduler.start();
+process.on(
+  "uncaughtException",
+  (error) => {
+    console.error(
+      "[UNCAUGHT EXCEPTION]",
+      error
+    );
   }
 );
