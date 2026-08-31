@@ -137,15 +137,12 @@ app.use(
 // 7. HEALTH CHECK
 // =====================================================
 
-app.get(
-  "/api/health",
-  (req, res) => {
-    res.json({
-      ok: true,
-      time: new Date().toISOString(),
-    });
-  }
-);
+app.get("/api/health", (req, res) => {
+  res.json({
+    ok: true,
+    time: new Date().toISOString(),
+  });
+});
 
 // =====================================================
 // 8. FRONTEND FALLBACK
