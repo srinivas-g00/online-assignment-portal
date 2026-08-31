@@ -74,6 +74,7 @@ if (!SUPABASE_SERVICE_ROLE_KEY) {
 // ============================================================
 //
 // This client runs ONLY on the backend.
+// The service-role key is NEVER sent to the browser.
 //
 
 let supabase = null;
@@ -150,11 +151,8 @@ function makeSafeFileName(
 // MULTER MEMORY STORAGE
 // ============================================================
 //
-// Files are kept in memory temporarily and then uploaded to
-// Supabase Storage.
-//
-// This is important for Render because local disk should not be
-// treated as permanent file storage.
+// Files are temporarily kept in memory and then uploaded
+// directly to Supabase Storage.
 //
 
 const memoryStorage =
@@ -216,18 +214,10 @@ function getBucketName(
 // UPLOAD TO SUPABASE
 // ============================================================
 //
-// file = req.file from multer.memoryStorage()
+// Uploads the file and then immediately downloads it back
+// to verify that the object really exists.
 //
-// Returns:
-//
-// {
-//   bucket,
-//   path,
-//   fileName,
-//   originalName,
-//   size,
-//   mimeType
-// }
+// This prevents a false "upload successful" state.
 //
 
 async function uploadToSupabase(
@@ -250,11 +240,21 @@ async function uploadToSupabase(
     );
   }
 
+  if (
+    file.buffer.length === 0
+  ) {
+    throw new Error(
+      "Uploaded file is empty."
+    );
+  }
+
   const client =
     getSupabase();
 
   const bucketName =
-    getBucketName(bucket);
+    getBucketName(
+      bucket
+    );
 
   const fileName =
     makeSafeFileName(
@@ -264,13 +264,62 @@ async function uploadToSupabase(
   const storagePath =
     fileName;
 
+  // ----------------------------------------------------------
+  // LOG UPLOAD INFORMATION
+  // ----------------------------------------------------------
+
+  console.log(
+    "================================================"
+  );
+
+  console.log(
+    "[Storage] UPLOAD START"
+  );
+
+  console.log(
+    `[Storage] Supabase URL: ${SUPABASE_URL}`
+  );
+
+  console.log(
+    `[Storage] Bucket: ${bucketName}`
+  );
+
+  console.log(
+    `[Storage] Path: ${storagePath}`
+  );
+
+  console.log(
+    `[Storage] Original file: ${file.originalname}`
+  );
+
+  console.log(
+    `[Storage] MIME type: ${
+      file.mimetype ||
+      "application/octet-stream"
+    }`
+  );
+
+  console.log(
+    `[Storage] Size: ${file.buffer.length} bytes`
+  );
+
+  console.log(
+    "================================================"
+  );
+
+  // ----------------------------------------------------------
+  // UPLOAD
+  // ----------------------------------------------------------
+
   const {
     data,
     error,
   } =
     await client
       .storage
-      .from(bucketName)
+      .from(
+        bucketName
+      )
       .upload(
         storagePath,
         file.buffer,
@@ -289,7 +338,7 @@ async function uploadToSupabase(
 
   if (error) {
     console.error(
-      "[Storage] Upload error:",
+      "[Storage] UPLOAD FAILED:",
       error.message ||
         error
     );
@@ -300,8 +349,136 @@ async function uploadToSupabase(
     );
   }
 
+  const actualPath =
+    data &&
+    data.path
+      ? data.path
+      : storagePath;
+
   console.log(
-    `[Storage] Uploaded ${file.originalname} -> ${bucketName}/${storagePath}`
+    `[Storage] Upload API reported success: ${bucketName}/${actualPath}`
+  );
+
+  // ----------------------------------------------------------
+  // VERIFY BY DOWNLOADING THE OBJECT
+  // ----------------------------------------------------------
+
+  let verificationBuffer =
+    null;
+
+  try {
+    console.log(
+      `[Storage] Verifying uploaded object: ${bucketName}/${actualPath}`
+    );
+
+    const {
+      data: verifyData,
+      error: verifyError,
+    } =
+      await client
+        .storage
+        .from(
+          bucketName
+        )
+        .download(
+          actualPath
+        );
+
+    if (verifyError) {
+      throw new Error(
+        verifyError.message ||
+          "Could not verify uploaded object."
+      );
+    }
+
+    if (!verifyData) {
+      throw new Error(
+        "Supabase returned no object while verifying the upload."
+      );
+    }
+
+    const arrayBuffer =
+      await verifyData.arrayBuffer();
+
+    verificationBuffer =
+      Buffer.from(
+        arrayBuffer
+      );
+
+    if (
+      verificationBuffer.length ===
+      0
+    ) {
+      throw new Error(
+        "Supabase returned an empty object during upload verification."
+      );
+    }
+
+    if (
+      verificationBuffer.length !==
+      file.buffer.length
+    ) {
+      throw new Error(
+        `Upload verification size mismatch. Original: ${file.buffer.length} bytes, stored: ${verificationBuffer.length} bytes.`
+      );
+    }
+
+    console.log(
+      `[Storage] UPLOAD VERIFIED: ${bucketName}/${actualPath} (${verificationBuffer.length} bytes)`
+    );
+  } catch (verificationError) {
+    console.error(
+      "[Storage] UPLOAD VERIFICATION FAILED:",
+      verificationError.message
+    );
+
+    // --------------------------------------------------------
+    // Try removing an object that cannot be verified
+    // --------------------------------------------------------
+
+    try {
+      await client
+        .storage
+        .from(
+          bucketName
+        )
+        .remove([
+          actualPath,
+        ]);
+
+      console.log(
+        `[Storage] Removed unverified object: ${bucketName}/${actualPath}`
+      );
+    } catch (cleanupError) {
+      console.error(
+        "[Storage] Could not remove unverified object:",
+        cleanupError.message
+      );
+    }
+
+    throw new Error(
+      `Supabase upload verification failed: ${verificationError.message}`
+    );
+  }
+
+  console.log(
+    "================================================"
+  );
+
+  console.log(
+    "[Storage] UPLOAD COMPLETE"
+  );
+
+  console.log(
+    `Bucket: ${bucketName}`
+  );
+
+  console.log(
+    `Path: ${actualPath}`
+  );
+
+  console.log(
+    "================================================"
   );
 
   return {
@@ -309,12 +486,10 @@ async function uploadToSupabase(
       bucketName,
 
     path:
-      data &&
-      data.path
-        ? data.path
-        : storagePath,
+      actualPath,
 
-    fileName,
+    fileName:
+      fileName,
 
     originalName:
       file.originalname,
@@ -334,12 +509,6 @@ async function uploadToSupabase(
 // ============================================================
 // DOWNLOAD FROM SUPABASE
 // ============================================================
-//
-// Used by the backend for:
-//   - displaying protected files
-//   - extracting text
-//   - grading
-//
 
 async function downloadFromSupabase(
   bucket,
@@ -349,12 +518,19 @@ async function downloadFromSupabase(
     getSupabase();
 
   const bucketName =
-    getBucketName(bucket);
+    getBucketName(
+      bucket
+    );
 
   const safePath =
     String(
       storagePath || ""
-    ).trim();
+    )
+      .replace(
+        /\\/g,
+        "/"
+      )
+      .trim();
 
   if (!safePath) {
     throw new Error(
@@ -362,20 +538,26 @@ async function downloadFromSupabase(
     );
   }
 
+  console.log(
+    `[Storage] DOWNLOAD: ${bucketName}/${safePath}`
+  );
+
   const {
     data,
     error,
   } =
     await client
       .storage
-      .from(bucketName)
+      .from(
+        bucketName
+      )
       .download(
         safePath
       );
 
   if (error) {
     console.error(
-      "[Storage] Download error:",
+      `[Storage] DOWNLOAD FAILED: ${bucketName}/${safePath}`,
       error.message ||
         error
     );
@@ -395,9 +577,25 @@ async function downloadFromSupabase(
   const arrayBuffer =
     await data.arrayBuffer();
 
-  return Buffer.from(
-    arrayBuffer
+  const buffer =
+    Buffer.from(
+      arrayBuffer
+    );
+
+  if (
+    buffer.length ===
+    0
+  ) {
+    throw new Error(
+      "Supabase returned a zero-byte file."
+    );
+  }
+
+  console.log(
+    `[Storage] DOWNLOAD SUCCESS: ${bucketName}/${safePath} (${buffer.length} bytes)`
   );
+
+  return buffer;
 }
 
 // ============================================================
@@ -412,12 +610,19 @@ async function deleteFromSupabase(
     getSupabase();
 
   const bucketName =
-    getBucketName(bucket);
+    getBucketName(
+      bucket
+    );
 
   const safePath =
     String(
       storagePath || ""
-    ).trim();
+    )
+      .replace(
+        /\\/g,
+        "/"
+      )
+      .trim();
 
   if (!safePath) {
     return;
@@ -428,14 +633,16 @@ async function deleteFromSupabase(
   } =
     await client
       .storage
-      .from(bucketName)
+      .from(
+        bucketName
+      )
       .remove([
         safePath,
       ]);
 
   if (error) {
     console.error(
-      "[Storage] Delete error:",
+      "[Storage] DELETE ERROR:",
       error.message ||
         error
     );
@@ -454,12 +661,6 @@ async function deleteFromSupabase(
 // ============================================================
 // CREATE SIGNED URL
 // ============================================================
-//
-// Useful if you decide to give the browser temporary access
-// to a private file.
-//
-// The service-role key is never exposed.
-//
 
 async function createSignedUrl(
   bucket,
@@ -470,12 +671,19 @@ async function createSignedUrl(
     getSupabase();
 
   const bucketName =
-    getBucketName(bucket);
+    getBucketName(
+      bucket
+    );
 
   const safePath =
     String(
       storagePath || ""
-    ).trim();
+    )
+      .replace(
+        /\\/g,
+        "/"
+      )
+      .trim();
 
   if (!safePath) {
     throw new Error(
@@ -497,7 +705,9 @@ async function createSignedUrl(
   } =
     await client
       .storage
-      .from(bucketName)
+      .from(
+        bucketName
+      )
       .createSignedUrl(
         safePath,
         expiry
@@ -505,7 +715,7 @@ async function createSignedUrl(
 
   if (error) {
     console.error(
-      "[Storage] Signed URL error:",
+      "[Storage] SIGNED URL ERROR:",
       error.message ||
         error
     );
@@ -516,23 +726,21 @@ async function createSignedUrl(
     );
   }
 
-  return (
-    data &&
-    data.signedUrl
-      ? data.signedUrl
-      : null
-  );
+  if (
+    !data ||
+    !data.signedUrl
+  ) {
+    throw new Error(
+      "Supabase did not return a signed URL."
+    );
+  }
+
+  return data.signedUrl;
 }
 
 // ============================================================
 // TEMPORARY FILE HELPERS
 // ============================================================
-//
-// These are optional utilities for older code that requires
-// a physical file path.
-//
-// Permanent files remain in Supabase Storage.
-//
 
 async function saveTemporaryFile(
   buffer,
@@ -618,9 +826,6 @@ async function deleteTemporaryFile(
 // ============================================================
 // MULTER MIDDLEWARE
 // ============================================================
-//
-// These names match your current routes.
-//
 
 const uploadAnswer =
   baseUploader.single(
