@@ -30,27 +30,28 @@ function getJwtSecret() {
 
 function auth(req, res, next) {
   try {
+    let token = null;
     const authHeader = req.headers.authorization;
 
-    // No Authorization header
-    if (!authHeader) {
-      return res.status(401).json({
-        error: "Authentication token is required.",
-      });
+    // 1. Check Authorization header (Bearer token)
+    if (authHeader) {
+      if (!authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({
+          error: "Invalid authentication format.",
+        });
+      }
+
+      token = authHeader
+        .substring(7)
+        .trim();
     }
 
-    // Invalid Authorization format
-    if (!authHeader.startsWith("Bearer ")) {
-      return res.status(401).json({
-        error: "Invalid authentication format.",
-      });
+    // 2. Fallback: Check query parameter (?token=...) for browser tabs/links
+    if (!token && req.query && req.query.token) {
+      token = String(req.query.token).trim();
     }
 
-    // Extract token
-    const token = authHeader
-      .substring(7)
-      .trim();
-
+    // No token found in header or query
     if (!token) {
       return res.status(401).json({
         error: "Authentication token is required.",
