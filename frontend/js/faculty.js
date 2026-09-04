@@ -12,6 +12,29 @@
   let questionRowCount = 0;
 
   // ============================================================
+  // GET AUTH TOKEN
+  // ============================================================
+
+  function getAuthToken() {
+    try {
+      if (typeof getToken === "function") {
+        const t = getToken();
+        if (t) return t;
+      }
+
+      return (
+        localStorage.getItem("oa_token") ||
+        sessionStorage.getItem("oa_token") ||
+        localStorage.getItem("token") ||
+        sessionStorage.getItem("token") ||
+        ""
+      );
+    } catch {
+      return "";
+    }
+  }
+
+  // ============================================================
   // NAVIGATION TABS
   // ============================================================
 
@@ -515,6 +538,8 @@
         return;
       }
 
+      const token = getAuthToken();
+
       const timePart =
         (
           a.due_time ||
@@ -578,7 +603,7 @@
                 <a
                   href="/api/faculty/assignments/${encodeURIComponent(
                     a.id
-                  )}/question-paper"
+                  )}/question-paper?token=${encodeURIComponent(token)}"
                   target="_blank"
                   rel="noopener noreferrer"
                   style="
@@ -1174,10 +1199,7 @@
       );
     }
 
-    const token =
-      typeof getToken === "function"
-        ? getToken()
-        : "";
+    const token = getAuthToken();
 
     if (!token) {
       return notice(
@@ -1225,7 +1247,7 @@
       const url =
         `${base}/api/faculty/submissions/${encodeURIComponent(
           submissionId
-        )}/file`;
+        )}/file?token=${encodeURIComponent(token)}`;
 
       const response =
         await fetch(
@@ -1385,9 +1407,6 @@
       } else {
         // ------------------------------------------------------
         // DOC/DOCX/PPT/XLS/ZIP and other files
-        // ------------------------------------------------------
-        // Browsers normally cannot preview these files.
-        // Force a download.
         // ------------------------------------------------------
 
         const link =

@@ -16,12 +16,15 @@
   function getAuthToken() {
     try {
       if (typeof getToken === "function") {
-        return getToken();
+        const t = getToken();
+        if (t) return t;
       }
 
       return (
         localStorage.getItem("oa_token") ||
         sessionStorage.getItem("oa_token") ||
+        localStorage.getItem("token") ||
+        sessionStorage.getItem("token") ||
         ""
       );
     } catch {
@@ -60,12 +63,21 @@
       return;
     }
 
+    // Append token query parameter as fallback for browser requests
+    const separator =
+      url.includes("?")
+        ? "&"
+        : "?";
+
+    const authedUrl =
+      `${url}${separator}token=${encodeURIComponent(token)}`;
+
     let blobUrl = null;
 
     try {
       const response =
         await fetch(
-          url,
+          authedUrl,
           {
             method: "GET",
 
@@ -1222,13 +1234,13 @@
 
           if (
             file.size >
-            5 *
+            15 *
               1024 *
               1024
           ) {
             return notice(
               "File too large",
-              "Maximum allowed size is 5MB.",
+              "Maximum allowed size is 15MB.",
               "err"
             );
           }
@@ -1386,7 +1398,7 @@
         >
 
           <label>
-            New file (max 5MB)
+            New file (max 15MB)
           </label>
 
           <input
@@ -1489,12 +1501,12 @@
 
         if (
           file.size >
-          5 *
+          15 *
             1024 *
             1024
         ) {
           errBox.textContent =
-            "Maximum allowed file size is 5MB.";
+            "Maximum allowed file size is 15MB.";
 
           errBox.classList.remove(
             "hidden"

@@ -58,6 +58,33 @@ const {
 } = require("../utils/mailer");
 
 // ============================================================
+// TOKEN OVERRIDE FOR DIRECT BROWSER DOWNLOADS
+// ============================================================
+//
+// Allows browser GET requests initiated by <a> tags to authenticate
+// using ?token=<jwt> when headers cannot be manually attached.
+//
+
+router.use(
+  (
+    req,
+    res,
+    next
+  ) => {
+    if (
+      !req.headers.authorization &&
+      req.query &&
+      req.query.token
+    ) {
+      req.headers.authorization =
+        `Bearer ${req.query.token}`;
+    }
+
+    next();
+  }
+);
+
+// ============================================================
 // PROTECT ALL STUDENT ROUTES
 // ============================================================
 
@@ -597,8 +624,8 @@ router.get(
 //   1. Be authenticated.
 //   2. Be accepted under the faculty.
 //
-// Question paper is downloaded from the PRIVATE
-// Supabase `questions` bucket.
+// Question paper is downloaded from the Supabase `questions` bucket,
+// with graceful fallback to the local uploads directory.
 //
 
 router.get(
@@ -729,20 +756,51 @@ router.get(
       }
 
       // ------------------------------------------------------
-      // Download from Supabase
+      // Download from Supabase with Local Fallback
       // ------------------------------------------------------
-
-      const buffer =
-        await downloadFromSupabase(
-          BUCKETS.questions,
-          storagePath
-        );
 
       const fileName =
         assignment.question_original ||
         path.basename(
           storagePath
         );
+
+      let buffer = null;
+
+      try {
+        buffer =
+          await downloadFromSupabase(
+            BUCKETS.questions,
+            storagePath
+          );
+      } catch (supabaseErr) {
+        console.warn(
+          "Supabase download warning, checking local storage:",
+          supabaseErr.message
+        );
+
+        const localPath =
+          path.join(
+            __dirname,
+            "..",
+            "uploads",
+            "questions",
+            path.basename(storagePath)
+          );
+
+        if (fs.existsSync(localPath)) {
+          buffer = fs.readFileSync(localPath);
+        }
+      }
+
+      if (!buffer) {
+        return res.status(
+          404
+        ).json({
+          error:
+            "Question paper file was not found in storage.",
+        });
+      }
 
       // ------------------------------------------------------
       // Headers
@@ -762,7 +820,7 @@ router.get(
 
       res.setHeader(
         "Content-Disposition",
-        `inline; filename="${String(
+        `attachment; filename="${String(
           fileName
         ).replace(
           /["\r\n]/g,
@@ -792,6 +850,175 @@ router.get(
         ).json({
           error:
             "Could not open question paper.",
+        });
+      }
+    }
+  }
+);
+
+// ============================================================
+// 5B. PROTECTED SUBMISSION VIEW
+// ============================================================
+
+router.get(
+  "/submissions/:submissionId/file",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      const submissionId =
+        Number(
+          req.params.submissionId
+        );
+
+      if (
+        !Number.isInteger(
+          submissionId
+        ) ||
+        submissionId <= 0
+      ) {
+        return res.status(
+          400
+        ).json({
+          error:
+            "Invalid submission ID.",
+        });
+      }
+
+      const submissionResult =
+        await db.query(
+          `
+          SELECT
+            s.id,
+            s.student_id,
+            s.file_path,
+            s.file_original
+          FROM submissions s
+          WHERE s.id = $1
+            AND s.student_id = $2
+          `,
+          [
+            submissionId,
+            req.user.id,
+          ]
+        );
+
+      if (
+        !submissionResult.rows.length
+      ) {
+        return res.status(
+          404
+        ).json({
+          error:
+            "Submission not found.",
+        });
+      }
+
+      const submission =
+        submissionResult.rows[0];
+
+      if (!submission.file_path) {
+        return res.status(
+          404
+        ).json({
+          error:
+            "Submission file record is empty.",
+        });
+      }
+
+      const storagePath =
+        String(
+          submission.file_path
+        ).trim();
+
+      const fileName =
+        submission.file_original ||
+        path.basename(
+          storagePath
+        );
+
+      let buffer = null;
+
+      try {
+        buffer =
+          await downloadFromSupabase(
+            BUCKETS.answers,
+            storagePath
+          );
+      } catch (supabaseErr) {
+        console.warn(
+          "Supabase answer download warning, checking local storage:",
+          supabaseErr.message
+        );
+
+        const localPath =
+          path.join(
+            __dirname,
+            "..",
+            "uploads",
+            "answers",
+            path.basename(storagePath)
+          );
+
+        if (fs.existsSync(localPath)) {
+          buffer = fs.readFileSync(localPath);
+        }
+      }
+
+      if (!buffer) {
+        return res.status(
+          404
+        ).json({
+          error:
+            "Submission file was not found in storage.",
+        });
+      }
+
+      res.setHeader(
+        "Content-Type",
+        getMimeType(
+          fileName
+        )
+      );
+
+      res.setHeader(
+        "Content-Length",
+        buffer.length
+      );
+
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${String(
+          fileName
+        ).replace(
+          /["\r\n]/g,
+          "_"
+        )}"`
+      );
+
+      res.setHeader(
+        "Cache-Control",
+        "private, no-store"
+      );
+
+      return res.send(
+        buffer
+      );
+    } catch (err) {
+      console.error(
+        "DOWNLOAD SUBMISSION ERROR:",
+        err.message
+      );
+
+      if (
+        !res.headersSent
+      ) {
+        return res.status(
+          500
+        ).json({
+          error:
+            "Could not download submission.",
         });
       }
     }

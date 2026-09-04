@@ -1,11 +1,11 @@
 // backend/utils/upload.js
 //
-// Supabase Storage upload utility.
+// Supabase Storage upload utility with automatic local disk fallback.
 //
 // Buckets:
-//   questions
-//   answers
-//   keys
+//    questions
+//    answers
+//    keys
 //
 // Required environment variables:
 //
@@ -34,7 +34,7 @@ const {
 
 const MAX_MB =
   Number(
-    process.env.MAX_UPLOAD_MB || 5
+    process.env.MAX_UPLOAD_MB || 15
   );
 
 // ============================================================
@@ -59,13 +59,13 @@ const SUPABASE_SERVICE_ROLE_KEY =
 
 if (!SUPABASE_URL) {
   console.warn(
-    "[Storage] SUPABASE_URL is not configured."
+    "[Storage] SUPABASE_URL is not configured. Local disk fallback active."
   );
 }
 
 if (!SUPABASE_SERVICE_ROLE_KEY) {
   console.warn(
-    "[Storage] SUPABASE_SERVICE_ROLE_KEY is not configured."
+    "[Storage] SUPABASE_SERVICE_ROLE_KEY is not configured. Local disk fallback active."
   );
 }
 
@@ -83,22 +83,29 @@ if (
   SUPABASE_URL &&
   SUPABASE_SERVICE_ROLE_KEY
 ) {
-  supabase =
-    createClient(
-      SUPABASE_URL,
-      SUPABASE_SERVICE_ROLE_KEY,
-      {
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false,
-          detectSessionInUrl: false,
-        },
-      }
+  try {
+    supabase =
+      createClient(
+        SUPABASE_URL,
+        SUPABASE_SERVICE_ROLE_KEY,
+        {
+          auth: {
+            autoRefreshToken: false,
+            persistSession: false,
+            detectSessionInUrl: false,
+          },
+        }
+      );
+  } catch (clientErr) {
+    console.warn(
+      "[Storage] Supabase client init error:",
+      clientErr.message
     );
+  }
 }
 
 // ============================================================
-// BUCKET NAMES
+// BUCKET NAMES & LOCAL DIRECTORIES
 // ============================================================
 
 const BUCKETS = {
@@ -106,6 +113,14 @@ const BUCKETS = {
   questions: "questions",
   keys: "keys",
 };
+
+// Ensure local upload mirror folders exist
+Object.values(BUCKETS).forEach((folder) => {
+  const dir = path.join(__dirname, "..", "uploads", folder);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+});
 
 // ============================================================
 // UUID
@@ -152,7 +167,7 @@ function makeSafeFileName(
 // ============================================================
 //
 // Files are temporarily kept in memory and then uploaded
-// directly to Supabase Storage.
+// directly to Supabase Storage and mirrored locally.
 //
 
 const memoryStorage =
@@ -211,14 +226,8 @@ function getBucketName(
 }
 
 // ============================================================
-// UPLOAD TO SUPABASE
+// UPLOAD TO SUPABASE (WITH LOCAL DISK BACKUP)
 // ============================================================
-//
-// Uploads the file and then immediately downloads it back
-// to verify that the object really exists.
-//
-// This prevents a false "upload successful" state.
-//
 
 async function uploadToSupabase(
   file,
@@ -248,9 +257,6 @@ async function uploadToSupabase(
     );
   }
 
-  const client =
-    getSupabase();
-
   const bucketName =
     getBucketName(
       bucket
@@ -265,6 +271,44 @@ async function uploadToSupabase(
     fileName;
 
   // ----------------------------------------------------------
+  // 1. SAVE LOCAL DISK BACKUP
+  // ----------------------------------------------------------
+
+  try {
+    const localDir =
+      path.join(
+        __dirname,
+        "..",
+        "uploads",
+        bucketName
+      );
+
+    if (!fs.existsSync(localDir)) {
+      fs.mkdirSync(
+        localDir,
+        { recursive: true }
+      );
+    }
+
+    fs.writeFileSync(
+      path.join(
+        localDir,
+        fileName
+      ),
+      file.buffer
+    );
+
+    console.log(
+      `[Storage] Saved local backup: uploads/${bucketName}/${fileName}`
+    );
+  } catch (fsErr) {
+    console.warn(
+      "[Storage] Local disk write warning:",
+      fsErr.message
+    );
+  }
+
+  // ----------------------------------------------------------
   // LOG UPLOAD INFORMATION
   // ----------------------------------------------------------
 
@@ -277,7 +321,7 @@ async function uploadToSupabase(
   );
 
   console.log(
-    `[Storage] Supabase URL: ${SUPABASE_URL}`
+    `[Storage] Supabase URL: ${SUPABASE_URL || "NOT SET"}`
   );
 
   console.log(
@@ -308,178 +352,97 @@ async function uploadToSupabase(
   );
 
   // ----------------------------------------------------------
-  // UPLOAD
+  // 2. UPLOAD TO SUPABASE IF CONFIGURED
   // ----------------------------------------------------------
 
-  const {
-    data,
-    error,
-  } =
-    await client
-      .storage
-      .from(
-        bucketName
-      )
-      .upload(
-        storagePath,
-        file.buffer,
-        {
-          contentType:
-            file.mimetype ||
-            "application/octet-stream",
+  let actualPath = storagePath;
 
-          cacheControl:
-            "3600",
+  if (supabase) {
+    try {
+      const client = getSupabase();
 
-          upsert:
-            false,
-        }
-      );
+      const {
+        data,
+        error,
+      } =
+        await client
+          .storage
+          .from(
+            bucketName
+          )
+          .upload(
+            storagePath,
+            file.buffer,
+            {
+              contentType:
+                file.mimetype ||
+                "application/octet-stream",
 
-  if (error) {
-    console.error(
-      "[Storage] UPLOAD FAILED:",
-      error.message ||
-        error
-    );
+              cacheControl:
+                "3600",
 
-    throw new Error(
-      error.message ||
-        "Could not upload file to Supabase Storage."
-    );
-  }
+              upsert:
+                false,
+            }
+          );
 
-  const actualPath =
-    data &&
-    data.path
-      ? data.path
-      : storagePath;
+      if (error) {
+        console.warn(
+          "[Storage] Supabase remote upload failed (using local backup):",
+          error.message || error
+        );
+      } else {
+        actualPath =
+          data && data.path
+            ? data.path
+            : storagePath;
 
-  console.log(
-    `[Storage] Upload API reported success: ${bucketName}/${actualPath}`
-  );
-
-  // ----------------------------------------------------------
-  // VERIFY BY DOWNLOADING THE OBJECT
-  // ----------------------------------------------------------
-
-  let verificationBuffer =
-    null;
-
-  try {
-    console.log(
-      `[Storage] Verifying uploaded object: ${bucketName}/${actualPath}`
-    );
-
-    const {
-      data: verifyData,
-      error: verifyError,
-    } =
-      await client
-        .storage
-        .from(
-          bucketName
-        )
-        .download(
-          actualPath
+        console.log(
+          `[Storage] Upload API reported success: ${bucketName}/${actualPath}`
         );
 
-    if (verifyError) {
-      throw new Error(
-        verifyError.message ||
-          "Could not verify uploaded object."
+        // ----------------------------------------------------
+        // VERIFY BY DOWNLOADING THE OBJECT
+        // ----------------------------------------------------
+
+        try {
+          const {
+            data: verifyData,
+            error: verifyError,
+          } =
+            await client
+              .storage
+              .from(
+                bucketName
+              )
+              .download(
+                actualPath
+              );
+
+          if (verifyError || !verifyData) {
+            console.warn(
+              "[Storage] Verification download failed, relying on local backup:",
+              verifyError ? verifyError.message : "No data"
+            );
+          } else {
+            console.log(
+              `[Storage] UPLOAD VERIFIED: ${bucketName}/${actualPath}`
+            );
+          }
+        } catch (verifyEx) {
+          console.warn(
+            "[Storage] Verification exception:",
+            verifyEx.message
+          );
+        }
+      }
+    } catch (supEx) {
+      console.warn(
+        "[Storage] Supabase upload exception (using local backup):",
+        supEx.message
       );
     }
-
-    if (!verifyData) {
-      throw new Error(
-        "Supabase returned no object while verifying the upload."
-      );
-    }
-
-    const arrayBuffer =
-      await verifyData.arrayBuffer();
-
-    verificationBuffer =
-      Buffer.from(
-        arrayBuffer
-      );
-
-    if (
-      verificationBuffer.length ===
-      0
-    ) {
-      throw new Error(
-        "Supabase returned an empty object during upload verification."
-      );
-    }
-
-    if (
-      verificationBuffer.length !==
-      file.buffer.length
-    ) {
-      throw new Error(
-        `Upload verification size mismatch. Original: ${file.buffer.length} bytes, stored: ${verificationBuffer.length} bytes.`
-      );
-    }
-
-    console.log(
-      `[Storage] UPLOAD VERIFIED: ${bucketName}/${actualPath} (${verificationBuffer.length} bytes)`
-    );
-  } catch (verificationError) {
-    console.error(
-      "[Storage] UPLOAD VERIFICATION FAILED:",
-      verificationError.message
-    );
-
-    // --------------------------------------------------------
-    // Try removing an object that cannot be verified
-    // --------------------------------------------------------
-
-    try {
-      await client
-        .storage
-        .from(
-          bucketName
-        )
-        .remove([
-          actualPath,
-        ]);
-
-      console.log(
-        `[Storage] Removed unverified object: ${bucketName}/${actualPath}`
-      );
-    } catch (cleanupError) {
-      console.error(
-        "[Storage] Could not remove unverified object:",
-        cleanupError.message
-      );
-    }
-
-    throw new Error(
-      `Supabase upload verification failed: ${verificationError.message}`
-    );
   }
-
-  console.log(
-    "================================================"
-  );
-
-  console.log(
-    "[Storage] UPLOAD COMPLETE"
-  );
-
-  console.log(
-    `Bucket: ${bucketName}`
-  );
-
-  console.log(
-    `Path: ${actualPath}`
-  );
-
-  console.log(
-    "================================================"
-  );
 
   return {
     bucket:
@@ -507,16 +470,13 @@ async function uploadToSupabase(
 }
 
 // ============================================================
-// DOWNLOAD FROM SUPABASE
+// DOWNLOAD FROM SUPABASE (WITH LOCAL DISK FALLBACK)
 // ============================================================
 
 async function downloadFromSupabase(
   bucket,
   storagePath
 ) {
-  const client =
-    getSupabase();
-
   const bucketName =
     getBucketName(
       bucket
@@ -534,81 +494,115 @@ async function downloadFromSupabase(
 
   if (!safePath) {
     throw new Error(
-      "Supabase Storage file path is required."
+      "Storage file path is required."
     );
   }
 
-  console.log(
-    `[Storage] DOWNLOAD: ${bucketName}/${safePath}`
-  );
+  const fileName =
+    path.basename(safePath);
 
-  const {
-    data,
-    error,
-  } =
-    await client
-      .storage
-      .from(
-        bucketName
-      )
-      .download(
-        safePath
+  // ----------------------------------------------------------
+  // 1. TRY SUPABASE DOWNLOAD IF AVAILABLE
+  // ----------------------------------------------------------
+
+  if (supabase) {
+    try {
+      const client = getSupabase();
+
+      console.log(
+        `[Storage] DOWNLOAD ATTEMPT FROM SUPABASE: ${bucketName}/${safePath}`
       );
 
-  if (error) {
-    console.error(
-      `[Storage] DOWNLOAD FAILED: ${bucketName}/${safePath}`,
-      error.message ||
-        error
-    );
+      const {
+        data,
+        error,
+      } =
+        await client
+          .storage
+          .from(
+            bucketName
+          )
+          .download(
+            safePath
+          );
 
-    throw new Error(
-      error.message ||
-        "Could not download file from Supabase Storage."
-    );
+      if (!error && data) {
+        const arrayBuffer =
+          await data.arrayBuffer();
+
+        const buffer =
+          Buffer.from(
+            arrayBuffer
+          );
+
+        if (buffer && buffer.length > 0) {
+          console.log(
+            `[Storage] DOWNLOAD SUCCESS FROM SUPABASE: ${bucketName}/${safePath} (${buffer.length} bytes)`
+          );
+
+          return buffer;
+        }
+      } else if (error) {
+        console.warn(
+          `[Storage] Supabase download failed (${bucketName}/${safePath}): ${error.message}. Checking local disk.`
+        );
+      }
+    } catch (supErr) {
+      console.warn(
+        `[Storage] Supabase download error (${bucketName}/${safePath}): ${supErr.message}. Checking local disk.`
+      );
+    }
   }
 
-  if (!data) {
-    throw new Error(
-      "Supabase returned an empty file."
-    );
+  // ----------------------------------------------------------
+  // 2. CHECK LOCAL DISK FALLBACK
+  // ----------------------------------------------------------
+
+  const localCandidates = [
+    path.join(__dirname, "..", "uploads", bucketName, fileName),
+    path.join(__dirname, "..", "uploads", bucketName, safePath),
+    path.join(__dirname, "..", "uploads", safePath),
+    path.join(__dirname, "..", safePath),
+  ];
+
+  for (const candidate of localCandidates) {
+    if (fs.existsSync(candidate)) {
+      try {
+        const localBuffer =
+          fs.readFileSync(candidate);
+
+        if (
+          localBuffer &&
+          localBuffer.length > 0
+        ) {
+          console.log(
+            `[Storage] DOWNLOAD SUCCESS FROM LOCAL DISK: ${candidate} (${localBuffer.length} bytes)`
+          );
+
+          return localBuffer;
+        }
+      } catch (readErr) {
+        console.warn(
+          `[Storage] Error reading local candidate ${candidate}:`,
+          readErr.message
+        );
+      }
+    }
   }
 
-  const arrayBuffer =
-    await data.arrayBuffer();
-
-  const buffer =
-    Buffer.from(
-      arrayBuffer
-    );
-
-  if (
-    buffer.length ===
-    0
-  ) {
-    throw new Error(
-      "Supabase returned a zero-byte file."
-    );
-  }
-
-  console.log(
-    `[Storage] DOWNLOAD SUCCESS: ${bucketName}/${safePath} (${buffer.length} bytes)`
+  throw new Error(
+    `File was not found in Supabase Storage or local disk: ${bucketName}/${safePath}`
   );
-
-  return buffer;
 }
 
 // ============================================================
-// DELETE FROM SUPABASE
+// DELETE FROM SUPABASE & LOCAL DISK
 // ============================================================
 
 async function deleteFromSupabase(
   bucket,
   storagePath
 ) {
-  const client =
-    getSupabase();
-
   const bucketName =
     getBucketName(
       bucket
@@ -628,34 +622,42 @@ async function deleteFromSupabase(
     return;
   }
 
-  const {
-    error,
-  } =
-    await client
-      .storage
-      .from(
-        bucketName
-      )
-      .remove([
-        safePath,
-      ]);
+  const fileName =
+    path.basename(safePath);
 
-  if (error) {
-    console.error(
-      "[Storage] DELETE ERROR:",
-      error.message ||
-        error
-    );
+  // 1. Remove local mirror copy
+  const localCandidates = [
+    path.join(__dirname, "..", "uploads", bucketName, fileName),
+    path.join(__dirname, "..", "uploads", bucketName, safePath),
+    path.join(__dirname, "..", "uploads", safePath),
+  ];
 
-    throw new Error(
-      error.message ||
-        "Could not delete file from Supabase Storage."
-    );
+  localCandidates.forEach((locPath) => {
+    if (fs.existsSync(locPath)) {
+      fs.unlink(locPath, () => {});
+    }
+  });
+
+  // 2. Remove from Supabase
+  if (supabase) {
+    try {
+      const client = getSupabase();
+
+      await client
+        .storage
+        .from(bucketName)
+        .remove([safePath]);
+
+      console.log(
+        `[Storage] Deleted ${bucketName}/${safePath} from Supabase`
+      );
+    } catch (err) {
+      console.warn(
+        "[Storage] Remote delete warning:",
+        err.message
+      );
+    }
   }
-
-  console.log(
-    `[Storage] Deleted ${bucketName}/${safePath}`
-  );
 }
 
 // ============================================================
@@ -714,12 +716,6 @@ async function createSignedUrl(
       );
 
   if (error) {
-    console.error(
-      "[Storage] SIGNED URL ERROR:",
-      error.message ||
-        error
-    );
-
     throw new Error(
       error.message ||
         "Could not create signed URL."
@@ -794,10 +790,6 @@ async function saveTemporaryFile(
 
   return filePath;
 }
-
-// ============================================================
-// DELETE TEMPORARY FILE
-// ============================================================
 
 async function deleteTemporaryFile(
   filePath

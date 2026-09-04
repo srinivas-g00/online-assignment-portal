@@ -2,6 +2,7 @@
 
 const express = require("express");
 const path = require("path");
+const fs = require("fs");
 
 const db = require("../config/db");
 
@@ -31,8 +32,15 @@ const {
 const router = express.Router();
 
 // ============================================================
-// AUTHENTICATION
+// AUTHENTICATION & DIRECT BROWSER TOKEN PARSER
 // ============================================================
+
+router.use((req, res, next) => {
+  if (!req.headers.authorization && req.query && req.query.token) {
+    req.headers.authorization = `Bearer ${req.query.token}`;
+  }
+  next();
+});
 
 router.use(auth);
 router.use(requireRole("faculty"));
@@ -125,7 +133,7 @@ async function extractTextFromBuffer(
 }
 
 // ============================================================
-// TEXT EXTRACTION FROM SUPABASE STORAGE
+// TEXT EXTRACTION FROM SUPABASE STORAGE (WITH LOCAL FALLBACK)
 // ============================================================
 
 async function extractTextFromStorage(
@@ -138,11 +146,23 @@ async function extractTextFromStorage(
       return "";
     }
 
-    const buffer =
-      await downloadFromSupabase(
-        bucket,
-        storagePath
-      );
+    let buffer = null;
+
+    try {
+      buffer =
+        await downloadFromSupabase(
+          bucket,
+          storagePath
+        );
+    } catch {
+      const folder = bucket === BUCKETS.keys ? "keys" : "answers";
+      const localPath = path.join(__dirname, "..", "uploads", folder, path.basename(storagePath));
+      if (fs.existsSync(localPath)) {
+        buffer = fs.readFileSync(localPath);
+      }
+    }
+
+    if (!buffer) return "";
 
     return await extractTextFromBuffer(
       buffer,
@@ -150,7 +170,7 @@ async function extractTextFromStorage(
     );
   } catch (err) {
     console.warn(
-      "SUPABASE TEXT EXTRACTION WARNING:",
+      "TEXT EXTRACTION WARNING:",
       bucket,
       storagePath,
       err.message
@@ -228,24 +248,7 @@ function getPossibleStoragePaths(
 }
 
 // ============================================================
-// DOWNLOAD STUDENT SUBMISSION
-// ============================================================
-//
-// Student files are stored in:
-//
-// answers bucket
-//
-// New uploads normally use:
-//
-// filename.pdf
-//
-// This function also supports older records that may contain:
-//
-// answers/filename.pdf
-// uploads/answers/filename.pdf
-//
-// Finally, it searches the bucket by filename.
-//
+// DOWNLOAD STUDENT SUBMISSION (WITH LOCAL FALLBACK)
 // ============================================================
 
 async function downloadSubmissionFile(
@@ -259,19 +262,12 @@ async function downloadSubmissionFile(
   let lastError =
     null;
 
-  // ----------------------------------------------------------
-  // 1. Try known paths
-  // ----------------------------------------------------------
-
+  // 1. Try Supabase candidates
   for (
     const candidate
     of possiblePaths
   ) {
     try {
-      console.log(
-        `[Storage] Trying submission path: answers/${candidate}`
-      );
-
       const buffer =
         await downloadFromSupabase(
           BUCKETS.answers,
@@ -279,60 +275,31 @@ async function downloadSubmissionFile(
         );
 
       if (
-        !Buffer.isBuffer(buffer) ||
-        buffer.length === 0
+        Buffer.isBuffer(buffer) &&
+        buffer.length > 0
       ) {
-        throw new Error(
-          "Supabase returned an empty file."
-        );
+        return {
+          buffer,
+          storagePath:
+            candidate,
+        };
       }
-
-      console.log(
-        `[Storage] Submission found: answers/${candidate} (${buffer.length} bytes)`
-      );
-
-      return {
-        buffer,
-        storagePath:
-          candidate,
-      };
     } catch (err) {
       lastError = err;
-
-      console.warn(
-        `[Storage] Submission path failed: answers/${candidate} -> ${err.message}`
-      );
     }
   }
 
-  // ----------------------------------------------------------
   // 2. Search bucket by filename
-  // ----------------------------------------------------------
-
   try {
     const supabase =
       getSupabase();
 
-    const normalized =
-      String(
-        storagePath || ""
-      )
-        .replace(
-          /\\/g,
-          "/"
-        )
-        .trim();
-
     const fileName =
       path.basename(
-        normalized
+        String(storagePath || "").replace(/\\/g, "/").trim()
       );
 
-    if (fileName) {
-      console.log(
-        `[Storage] Searching answers bucket for filename: ${fileName}`
-      );
-
+    if (fileName && supabase) {
       const {
         data,
         error,
@@ -350,74 +317,50 @@ async function downloadSubmissionFile(
             }
           );
 
-      if (error) {
-        console.error(
-          "[Storage] Bucket search error:",
-          error.message
-        );
-
-        lastError =
-          error;
-      } else {
-        console.log(
-          `[Storage] Bucket search returned ${
-            Array.isArray(data)
-              ? data.length
-              : 0
-          } result(s).`
-        );
-
+      if (!error && Array.isArray(data)) {
         const exactMatch =
-          Array.isArray(data)
-            ? data.find(
-                (item) =>
-                  item &&
-                  item.name ===
-                    fileName
-              )
-            : null;
-
-        if (exactMatch) {
-          console.log(
-            `[Storage] Exact filename found in answers: ${exactMatch.name}`
+          data.find(
+            (item) => item && item.name === fileName
           );
 
+        if (exactMatch) {
           const buffer =
             await downloadFromSupabase(
               BUCKETS.answers,
               exactMatch.name
             );
 
-          if (
-            !buffer ||
-            !buffer.length
-          ) {
-            throw new Error(
-              "Found file is empty."
-            );
+          if (buffer && buffer.length) {
+            return {
+              buffer,
+              storagePath:
+                exactMatch.name,
+            };
           }
-
-          return {
-            buffer,
-            storagePath:
-              exactMatch.name,
-          };
         }
       }
     }
   } catch (err) {
-    lastError =
-      err;
-
-    console.error(
-      "[Storage] Bucket search exception:",
-      err.message
-    );
+    lastError = err;
   }
 
-  // ----------------------------------------------------------
-  // 3. Final error
-  // ----------------------------------------------------------
+  // 3. Fallback to Local Disk (/uploads/answers)
+  const cleanFileName =
+    path.basename(String(storagePath || "").replace(/\\/g, "/").trim());
+
+  const localDiskPath =
+    path.join(__dirname, "..", "uploads", "answers", cleanFileName);
+
+  if (fs.existsSync(localDiskPath)) {
+    const localBuffer = fs.readFileSync(localDiskPath);
+    if (localBuffer && localBuffer.length) {
+      console.log(`[Storage] Loaded submission file from local disk: ${cleanFileName}`);
+      return {
+        buffer: localBuffer,
+        storagePath: cleanFileName,
+      };
+    }
+  }
 
   console.error(
     "[Storage] STUDENT SUBMISSION NOT FOUND",
@@ -431,7 +374,7 @@ async function downloadSubmissionFile(
   throw (
     lastError ||
     new Error(
-      "Student submission was not found in the Supabase answers bucket."
+      "Student submission was not found in storage."
     )
   );
 }
@@ -848,14 +791,27 @@ router.post(
 
     try {
       if (req.file) {
-        const uploaded =
-          await uploadToSupabase(
-            req.file,
-            BUCKETS.questions
-          );
+        try {
+          const uploaded =
+            await uploadToSupabase(
+              req.file,
+              BUCKETS.questions
+            );
 
-        storagePath =
-          uploaded.path;
+          storagePath =
+            uploaded.path;
+        } catch (supErr) {
+          console.warn("[Storage Fallback] Supabase question upload warning:", supErr.message);
+        }
+
+        // Always save a local copy as resilient backup
+        if (req.file.buffer) {
+          const destDir = path.join(__dirname, "..", "uploads", "questions");
+          if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
+          const safeName = storagePath ? path.basename(storagePath) : `${Date.now()}-${req.file.originalname}`;
+          fs.writeFileSync(path.join(destDir, safeName), req.file.buffer);
+          if (!storagePath) storagePath = safeName;
+        }
       }
 
       const result =
@@ -1109,10 +1065,6 @@ router.get(
     res
   ) => {
     try {
-      // ------------------------------------------------------
-      // Verify ownership
-      // ------------------------------------------------------
-
       const result =
         await db.query(
           `
@@ -1154,20 +1106,6 @@ router.get(
         });
       }
 
-      console.log(
-        "[Faculty Submission]",
-        {
-          submissionId:
-            submission.id,
-          databasePath:
-            submission.file_path,
-          originalName:
-            submission.file_original,
-          facultyId:
-            req.user.id,
-        }
-      );
-
       if (
         !submission.file_path ||
         !String(
@@ -1182,10 +1120,6 @@ router.get(
         });
       }
 
-      // ------------------------------------------------------
-      // Download from Supabase
-      // ------------------------------------------------------
-
       let downloadResult;
 
       try {
@@ -1196,25 +1130,11 @@ router.get(
       } catch (
         storageError
       ) {
-        console.error(
-          "[Faculty Submission] Supabase file lookup failed:",
-          {
-            submissionId:
-              submission.id,
-
-            databasePath:
-              submission.file_path,
-
-            error:
-              storageError.message,
-          }
-        );
-
         return res.status(
           404
         ).json({
           error:
-            "Student submission file was not found in the Supabase answers bucket. Check Render SUPABASE_URL and the Supabase answers bucket.",
+            "Student submission file was not found in storage.",
         });
       }
 
@@ -1239,10 +1159,6 @@ router.get(
           displayName
         );
 
-      // ------------------------------------------------------
-      // Headers
-      // ------------------------------------------------------
-
       res.setHeader(
         "Content-Type",
         mimeType
@@ -1255,21 +1171,12 @@ router.get(
 
       res.setHeader(
         "Content-Disposition",
-        `inline; filename="${displayName}"`
+        `attachment; filename="${displayName}"`
       );
 
       res.setHeader(
         "Cache-Control",
         "private, no-store, max-age=0"
-      );
-
-      res.setHeader(
-        "X-Content-Type-Options",
-        "nosniff"
-      );
-
-      console.log(
-        `[Faculty Submission] Sending ${displayName} (${buffer.length} bytes)`
       );
 
       return res.send(
@@ -1295,7 +1202,7 @@ router.get(
 );
 
 // ============================================================
-// FACULTY QUESTION PAPER VIEW
+// FACULTY QUESTION PAPER VIEW (WITH LOCAL FALLBACK)
 // ============================================================
 
 router.get(
@@ -1373,12 +1280,21 @@ router.get(
             candidate;
 
           break;
-        } catch (
-          err
-        ) {
-          console.warn(
-            `[Storage] Question paper path failed: ${candidate}`
-          );
+        } catch {
+          /* try next candidate */
+        }
+      }
+
+      if (!buffer) {
+        const localPath = path.join(
+          __dirname,
+          "..",
+          "uploads",
+          "questions",
+          path.basename(assignment.question_file)
+        );
+        if (fs.existsSync(localPath)) {
+          buffer = fs.readFileSync(localPath);
         }
       }
 
@@ -1387,7 +1303,7 @@ router.get(
           404
         ).json({
           error:
-            "Question paper was not found in Supabase Storage.",
+            "Question paper was not found in storage.",
         });
       }
 
@@ -1412,7 +1328,7 @@ router.get(
 
       res.setHeader(
         "Content-Disposition",
-        `inline; filename="${String(
+        `attachment; filename="${String(
           displayName
         ).replace(
           /["\r\n]/g,
@@ -1495,14 +1411,22 @@ router.post(
         ).trim();
 
       if (req.file) {
-        const uploaded =
-          await uploadToSupabase(
-            req.file,
-            BUCKETS.keys
-          );
+        try {
+          const uploaded =
+            await uploadToSupabase(
+              req.file,
+              BUCKETS.keys
+            );
 
-        storagePath =
-          uploaded.path;
+          storagePath =
+            uploaded.path;
+        } catch {
+          const safeName = `${Date.now()}-${req.file.originalname}`;
+          const destDir = path.join(__dirname, "..", "uploads", "keys");
+          if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
+          fs.writeFileSync(path.join(destDir, safeName), req.file.buffer);
+          storagePath = safeName;
+        }
 
         const extracted =
           await extractTextFromBuffer(
@@ -1561,22 +1485,6 @@ router.post(
           "Answer key saved. You can now run auto-correction.",
       });
     } catch (err) {
-      if (storagePath) {
-        try {
-          await deleteFromSupabase(
-            BUCKETS.keys,
-            storagePath
-          );
-        } catch (
-          cleanupError
-        ) {
-          console.error(
-            "KEY FILE CLEANUP ERROR:",
-            cleanupError.message
-          );
-        }
-      }
-
       console.error(
         "SET ANSWER KEY ERROR:",
         err.message
@@ -2290,31 +2198,6 @@ router.post(
             "Every question must contain question text, four options and correct option.",
         });
       }
-
-      const correctOption =
-        String(
-          q.correctOption
-        )
-          .trim()
-          .toUpperCase();
-
-      if (
-        ![
-          "A",
-          "B",
-          "C",
-          "D",
-        ].includes(
-          correctOption
-        )
-      ) {
-        return res.status(
-          400
-        ).json({
-          error:
-            "Correct option must be A, B, C or D.",
-        });
-      }
     }
 
     const totalMarks =
@@ -2406,6 +2289,18 @@ router.post(
             .trim()
             .toUpperCase();
 
+        const qParams = [
+          examId,
+          String(q.questionText).trim(),
+          String(q.optionA).trim(),
+          String(q.optionB).trim(),
+          String(q.optionC).trim(),
+          String(q.optionD).trim(),
+          correctOption,
+          Math.max(1, Number(q.marks) || 1),
+        ];
+
+        // Insert into exam_questions
         await client.query(
           `
           INSERT INTO exam_questions
@@ -2431,39 +2326,41 @@ router.post(
             $8
           )
           `,
-          [
-            examId,
-
-            String(
-              q.questionText
-            ).trim(),
-
-            String(
-              q.optionA
-            ).trim(),
-
-            String(
-              q.optionB
-            ).trim(),
-
-            String(
-              q.optionC
-            ).trim(),
-
-            String(
-              q.optionD
-            ).trim(),
-
-            correctOption,
-
-            Math.max(
-              1,
-              Number(
-                q.marks
-              ) || 1
-            ),
-          ]
+          qParams
         );
+
+        // Synchronize into questions table as fallback
+        try {
+          await client.query(
+            `
+            INSERT INTO questions
+            (
+              exam_id,
+              question_text,
+              option_a,
+              option_b,
+              option_c,
+              option_d,
+              correct_option,
+              marks
+            )
+            VALUES
+            (
+              $1,
+              $2,
+              $3,
+              $4,
+              $5,
+              $6,
+              $7,
+              $8
+            )
+            `,
+            qParams
+          );
+        } catch {
+          /* questions table fallback */
+        }
       }
 
       await client.query(
