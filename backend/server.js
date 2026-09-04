@@ -5,6 +5,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
+const fs = require("fs");
 
 require("./config/db");
 
@@ -20,8 +21,7 @@ const app = express();
 // 1. PORT
 // =====================================================
 
-const PORT =
-  Number(process.env.PORT) || 5000;
+const PORT = Number(process.env.PORT) || 5000;
 
 // =====================================================
 // 2. CORS
@@ -54,14 +54,14 @@ app.use(
 
 app.use(
   express.json({
-    limit: "2mb",
+    limit: "15mb",
   })
 );
 
 app.use(
   express.urlencoded({
     extended: true,
-    limit: "2mb",
+    limit: "15mb",
   })
 );
 
@@ -88,7 +88,7 @@ app.use(
 );
 
 // =====================================================
-// 5. FRONTEND PATH
+// 5. FRONTEND & UPLOADS PATHS
 // =====================================================
 
 const frontendPath =
@@ -98,8 +98,22 @@ const frontendPath =
     "frontend"
   );
 
+const uploadsPath =
+  path.join(
+    __dirname,
+    "uploads"
+  );
+
+// Ensure upload folders exist
+["questions", "answers", "keys"].forEach((folder) => {
+  const dir = path.join(uploadsPath, folder);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+});
+
 // =====================================================
-// 6. SERVE FRONTEND
+// 6. SERVE STATIC FILES (FRONTEND & UPLOADS)
 // =====================================================
 //
 // The frontend is committed to Git and can therefore be
@@ -114,6 +128,19 @@ app.use(
       maxAge: "1h",
     }
   )
+);
+
+// Serve uploads so students and faculty can download files
+app.use(
+  "/uploads",
+  express.static(uploadsPath, {
+    setHeaders: (res, filePath) => {
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${encodeURIComponent(path.basename(filePath))}"`
+      );
+    },
+  })
 );
 
 // =====================================================
@@ -166,16 +193,16 @@ app.get(
 //
 // IMPORTANT:
 //
-// Do NOT return index.html for API requests.
+// Do NOT return index.html for API or uploads requests.
 //
-// API errors should remain JSON.
+// API errors should remain JSON and upload links must not be hijacked.
 //
 // Only normal browser page requests should reach
 // the frontend fallback.
 //
 
 app.get(
-  /^\/(?!api(?:\/|$)).*$/,
+  /^\/(?!api(?:\/|$)|uploads(?:\/|$)).*$/,
   (req, res) => {
     return res.sendFile(
       path.join(
@@ -187,15 +214,15 @@ app.get(
 );
 
 // =====================================================
-// 10. 404 FOR UNKNOWN API ROUTES
+// 10. 404 FOR UNKNOWN API & UPLOAD ROUTES
 // =====================================================
 
 app.use(
-  "/api",
+  ["/api", "/uploads"],
   (req, res) => {
     return res.status(404).json({
       error:
-        "API endpoint not found.",
+        "Resource not found.",
     });
   }
 );
@@ -252,7 +279,7 @@ app.use(
       const maxMb =
         Number(
           process.env.MAX_UPLOAD_MB
-        ) || 5;
+        ) || 15;
 
       return res.status(400).json({
         error:
