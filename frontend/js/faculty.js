@@ -388,6 +388,10 @@
   // ASSIGNMENTS LIST (WITH DELETE BUTTON)
   // ============================================================
 
+  // ============================================================
+// ASSIGNMENTS LIST (WITH SIDE-BY-SIDE DELETE BUTTON)
+// ============================================================
+
   async function loadAssignments() {
     try {
       const rows =
@@ -477,7 +481,7 @@
 
                     <td>
 
-                      <div class="row-buttons" style="display:flex;gap:6px;">
+                      <div class="row-buttons" style="display:flex;gap:8px;align-items:center;">
 
                         <button
                           class="btn secondary"
@@ -507,7 +511,7 @@
         </table>
       `;
 
-      // Open Assignment listener
+      // 1. Open Assignment Listener
       document
         .querySelectorAll("[data-open]")
         .forEach((button) => {
@@ -517,7 +521,7 @@
             );
         });
 
-      // Delete Assignment listener
+      // 2. Delete Assignment Listener (beside Open)
       document
         .querySelectorAll("[data-delete]")
         .forEach((button) => {
@@ -526,7 +530,7 @@
 
             if (
               !confirm(
-                "Are you sure you want to delete this assignment? It will be permanently removed for you and all students."
+                "Are you sure you want to delete this assignment? It will be permanently removed for both faculty and students."
               )
             ) {
               return;
@@ -543,13 +547,14 @@
                 }
               );
 
-              notice("Deleted", "Assignment deleted successfully.");
+              notice("Deleted", "Assignment was deleted successfully.");
 
-              // Close details panel if viewing the deleted assignment
+              // Hide details view if this assignment was open
               if ($("assignmentDetailWrap")) {
                 $("assignmentDetailWrap").classList.add("hidden");
               }
 
+              // Re-fetch assignments list to update the table immediately
               await loadAssignments();
             } catch (err) {
               button.disabled = false;
