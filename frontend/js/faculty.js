@@ -385,7 +385,7 @@
   }
 
   // ============================================================
-  // ASSIGNMENTS LIST
+  // ASSIGNMENTS LIST (WITH DELETE BUTTON)
   // ============================================================
 
   async function loadAssignments() {
@@ -477,12 +477,23 @@
 
                     <td>
 
-                      <button
-                        class="btn secondary"
-                        data-open="${a.id}"
-                        type="button">
-                        Open
-                      </button>
+                      <div class="row-buttons" style="display:flex;gap:6px;">
+
+                        <button
+                          class="btn secondary"
+                          data-open="${a.id}"
+                          type="button">
+                          Open
+                        </button>
+
+                        <button
+                          class="btn danger"
+                          data-delete="${a.id}"
+                          type="button">
+                          Delete
+                        </button>
+
+                      </div>
 
                     </td>
 
@@ -496,6 +507,7 @@
         </table>
       `;
 
+      // Open Assignment listener
       document
         .querySelectorAll("[data-open]")
         .forEach((button) => {
@@ -503,6 +515,52 @@
             openAssignment(
               button.dataset.open
             );
+        });
+
+      // Delete Assignment listener
+      document
+        .querySelectorAll("[data-delete]")
+        .forEach((button) => {
+          button.onclick = async () => {
+            const assignmentId = button.dataset.delete;
+
+            if (
+              !confirm(
+                "Are you sure you want to delete this assignment? It will be permanently removed for you and all students."
+              )
+            ) {
+              return;
+            }
+
+            try {
+              button.disabled = true;
+              button.textContent = "Deleting...";
+
+              await api(
+                `/api/faculty/assignments/${encodeURIComponent(assignmentId)}`,
+                {
+                  method: "DELETE",
+                }
+              );
+
+              notice("Deleted", "Assignment deleted successfully.");
+
+              // Close details panel if viewing the deleted assignment
+              if ($("assignmentDetailWrap")) {
+                $("assignmentDetailWrap").classList.add("hidden");
+              }
+
+              await loadAssignments();
+            } catch (err) {
+              button.disabled = false;
+              button.textContent = "Delete";
+              notice(
+                "Delete failed",
+                err.message || "Could not delete assignment.",
+                "err"
+              );
+            }
+          };
         });
     } catch (err) {
       console.error(
@@ -513,7 +571,7 @@
   }
 
   // ============================================================
-  // OPEN ASSIGNMENT
+  // OPEN ASSIGNMENT (WITH IN-VIEW DELETE)
   // ============================================================
 
   async function openAssignment(id) {
@@ -559,13 +617,22 @@
         );
 
       // ========================================================
-      // ASSIGNMENT DETAIL
+      // ASSIGNMENT DETAIL HTML
       // ========================================================
 
       $("assignmentDetail").innerHTML = `
-        <h2>
-          ${escapeHtml(a.title)}
-        </h2>
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:8px;">
+          <h2 style="margin:0;">
+            ${escapeHtml(a.title)}
+          </h2>
+          <button
+            class="btn danger"
+            id="detailDeleteBtn"
+            type="button"
+            style="white-space:nowrap;">
+            Delete Assignment
+          </button>
+        </div>
 
         <p>
           ${escapeHtml(
@@ -1025,6 +1092,47 @@
       `;
 
       // ========================================================
+      // DETAIL VIEW DELETE BUTTON
+      // ========================================================
+
+      if ($("detailDeleteBtn")) {
+        $("detailDeleteBtn").onclick = async () => {
+          if (
+            !confirm(
+              "Are you sure you want to delete this assignment? It will be removed permanently for both you and your students."
+            )
+          ) {
+            return;
+          }
+
+          try {
+            $("detailDeleteBtn").disabled = true;
+            $("detailDeleteBtn").textContent = "Deleting...";
+
+            await api(`/api/faculty/assignments/${encodeURIComponent(id)}`, {
+              method: "DELETE",
+            });
+
+            notice("Deleted", "Assignment was removed.");
+
+            if ($("assignmentDetailWrap")) {
+              $("assignmentDetailWrap").classList.add("hidden");
+            }
+
+            await loadAssignments();
+          } catch (err) {
+            $("detailDeleteBtn").disabled = false;
+            $("detailDeleteBtn").textContent = "Delete Assignment";
+            notice(
+              "Delete failed",
+              err.message || "Could not delete assignment.",
+              "err"
+            );
+          }
+        };
+      }
+
+      // ========================================================
       // VIEW STUDENT SUBMISSION BUTTONS
       // ========================================================
 
@@ -1269,10 +1377,6 @@
           }
         );
 
-      // --------------------------------------------------------
-      // Backend error
-      // --------------------------------------------------------
-
       if (!response.ok) {
         let message =
           `Request failed (${response.status})`;
@@ -1304,17 +1408,13 @@
             }
           }
         } catch {
-          // Keep original error
+          // Fallback message
         }
 
         throw new Error(
           message
         );
       }
-
-      // --------------------------------------------------------
-      // Convert response to Blob
-      // --------------------------------------------------------
 
       const blob =
         await response.blob();
@@ -1325,10 +1425,6 @@
         );
       }
 
-      // --------------------------------------------------------
-      // Determine MIME type
-      // --------------------------------------------------------
-
       let mimeType =
         blob.type ||
         response.headers.get(
@@ -1336,16 +1432,8 @@
         ) ||
         "application/octet-stream";
 
-      // --------------------------------------------------------
-      // Create browser Blob URL
-      // --------------------------------------------------------
-
       blobUrl =
         URL.createObjectURL(blob);
-
-      // --------------------------------------------------------
-      // Try to preview
-      // --------------------------------------------------------
 
       const previewable =
         mimeType.startsWith(
@@ -1364,10 +1452,6 @@
             blobUrl,
             "_blank"
           );
-
-        // ------------------------------------------------------
-        // Popup blocked
-        // ------------------------------------------------------
 
         if (newWindow) {
           newWindow.focus();
@@ -1405,10 +1489,6 @@
           );
         }
       } else {
-        // ------------------------------------------------------
-        // DOC/DOCX/PPT/XLS/ZIP and other files
-        // ------------------------------------------------------
-
         const link =
           document.createElement(
             "a"
@@ -1436,10 +1516,6 @@
             : "The student submission download has started."
         );
       }
-
-      // --------------------------------------------------------
-      // Release Blob URL later
-      // --------------------------------------------------------
 
       setTimeout(() => {
         if (blobUrl) {

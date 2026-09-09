@@ -970,6 +970,136 @@ router.get(
 );
 
 // ============================================================
+// DELETE ASSIGNMENT
+// ============================================================
+
+router.delete(
+  "/assignments/:id",
+  async (
+    req,
+    res
+  ) => {
+    const client =
+      await db.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      // 1. Verify assignment belongs to logged-in faculty
+      const checkRes =
+        await client.query(
+          `
+          SELECT
+            id,
+            question_file,
+            answer_key_file
+          FROM assignments
+          WHERE id = $1
+            AND faculty_id = $2
+          `,
+          [
+            req.params.id,
+            req.user.id,
+          ]
+        );
+
+      const assignment =
+        checkRes.rows[0];
+
+      if (!assignment) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({
+          error:
+            "Assignment not found or you do not have permission to delete it.",
+        });
+      }
+
+      // 2. Fetch submissions to clean up any submitted files
+      const subRes =
+        await client.query(
+          `
+          SELECT file_path
+          FROM submissions
+          WHERE assignment_id = $1
+          `,
+          [assignment.id]
+        );
+
+      // 3. Remove submission answer files from storage
+      for (const sub of subRes.rows) {
+        if (sub.file_path) {
+          try {
+            await deleteFromSupabase(
+              BUCKETS.answers,
+              sub.file_path
+            );
+          } catch (_) {}
+        }
+      }
+
+      // 4. Remove question paper file from storage
+      if (assignment.question_file) {
+        try {
+          await deleteFromSupabase(
+            BUCKETS.questions,
+            assignment.question_file
+          );
+        } catch (_) {}
+      }
+
+      // 5. Remove answer key file from storage
+      if (assignment.answer_key_file) {
+        try {
+          await deleteFromSupabase(
+            BUCKETS.keys,
+            assignment.answer_key_file
+          );
+        } catch (_) {}
+      }
+
+      // 6. Delete dependent submissions rows (foreign key constraint)
+      await client.query(
+        `
+        DELETE FROM submissions
+        WHERE assignment_id = $1
+        `,
+        [assignment.id]
+      );
+
+      // 7. Delete the assignment record
+      await client.query(
+        `
+        DELETE FROM assignments
+        WHERE id = $1
+        `,
+        [assignment.id]
+      );
+
+      await client.query("COMMIT");
+
+      return res.json({
+        success: true,
+        message:
+          "Assignment and all associated records deleted successfully.",
+      });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      console.error(
+        "DELETE ASSIGNMENT ERROR:",
+        err.message
+      );
+      return res.status(500).json({
+        error:
+          "Could not delete assignment: " +
+          err.message,
+      });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+// ============================================================
 // ASSIGNMENT SUBMISSIONS
 // ============================================================
 
