@@ -25,12 +25,20 @@
 // The answers bucket should remain PRIVATE.
 //
 
-const express = require("express");
-const router = express.Router();
-const path = require("path");
-const fs = require("fs");
+const express =
+  require("express");
 
-const db = require("../config/db");
+const router =
+  express.Router();
+
+const path =
+  require("path");
+
+const fs =
+  require("fs");
+
+const db =
+  require("../config/db");
 
 const {
   auth,
@@ -47,6 +55,7 @@ const {
   downloadFromSupabase,
   deleteFromSupabase,
   BUCKETS,
+  getSupabase,
 } = require("../utils/upload");
 
 // ============================================================
@@ -71,13 +80,30 @@ router.use(
     res,
     next
   ) => {
+    const queryToken =
+      req.query &&
+      (
+        req.query.token ||
+        req.query.t ||
+        req.query.access_token
+      );
+
     if (
       !req.headers.authorization &&
-      req.query &&
-      req.query.token
+      queryToken
     ) {
+      const cleanToken =
+        String(
+          queryToken
+        )
+          .trim()
+          .replace(
+            /^Bearer\s+/i,
+            ""
+          );
+
       req.headers.authorization =
-        `Bearer ${req.query.token}`;
+        `Bearer ${cleanToken}`;
     }
 
     next();
@@ -88,24 +114,307 @@ router.use(
 // PROTECT ALL STUDENT ROUTES
 // ============================================================
 
-router.use(auth);
-router.use(requireRole("student"));
+router.use(
+  auth
+);
+
+router.use(
+  requireRole(
+    "student"
+  )
+);
+
+// ============================================================
+// HELPER: STORAGE PATH CANDIDATES
+// ============================================================
+
+function getPossibleStoragePaths(
+  storagePath,
+  folderName
+) {
+  const raw =
+    String(
+      storagePath || ""
+    ).trim();
+
+  if (
+    !raw
+  ) {
+    return [];
+  }
+
+  const normalized =
+    raw.replace(
+      /\\/g,
+      "/"
+    );
+
+  const noLeadingSlash =
+    normalized.replace(
+      /^\/+/,
+      ""
+    );
+
+  const withoutUploads =
+    noLeadingSlash.replace(
+      /^uploads\/+/i,
+      ""
+    );
+
+  const withoutFolder =
+    withoutUploads.replace(
+      new RegExp(
+        `^${folderName}\/+`,
+        "i"
+      ),
+      ""
+    );
+
+  const baseName =
+    path.basename(
+      normalized
+    );
+
+  const candidates = [
+    withoutFolder,
+    baseName,
+    normalized,
+    noLeadingSlash,
+    withoutUploads,
+    `${folderName}/${withoutFolder}`,
+    `${folderName}/${baseName}`,
+    `uploads/${folderName}/${baseName}`,
+  ];
+
+  return [
+    ...new Set(
+      candidates.filter(
+        Boolean
+      )
+    ),
+  ];
+}
+
+// ============================================================
+// HELPER: DOWNLOAD FILE WITH RESILIENT FALLBACKS
+// ============================================================
+
+async function fetchFileWithFallback(
+  bucket,
+  storagePath
+) {
+  const possiblePaths =
+    getPossibleStoragePaths(
+      storagePath,
+      bucket
+    );
+
+  let lastError =
+    null;
+
+  // 1. Try candidate paths on Supabase
+  for (
+    const candidate
+    of possiblePaths
+  ) {
+    try {
+      const buffer =
+        await downloadFromSupabase(
+          bucket,
+          candidate
+        );
+
+      if (
+        Buffer.isBuffer(
+          buffer
+        ) &&
+        buffer.length >
+          0
+      ) {
+        return {
+          buffer,
+          usedPath:
+            candidate,
+        };
+      }
+    } catch (
+      err
+    ) {
+      lastError =
+        err;
+    }
+  }
+
+  // 2. Search bucket by base filename
+  const cleanFileName =
+    path.basename(
+      String(
+        storagePath || ""
+      )
+        .replace(
+          /\\/g,
+          "/"
+        )
+        .trim()
+    );
+
+  try {
+    const supabase =
+      getSupabase();
+
+    if (
+      cleanFileName &&
+      supabase
+    ) {
+      const {
+        data,
+        error,
+      } =
+        await supabase
+          .storage
+          .from(
+            bucket
+          )
+          .list(
+            "",
+            {
+              limit: 1000,
+              search: cleanFileName,
+            }
+          );
+
+      if (
+        !error &&
+        Array.isArray(
+          data
+        )
+      ) {
+        const exactMatch =
+          data.find(
+            (
+              item
+            ) =>
+              item &&
+              item.name ===
+                cleanFileName
+          );
+
+        if (
+          exactMatch
+        ) {
+          const buffer =
+            await downloadFromSupabase(
+              bucket,
+              exactMatch.name
+            );
+
+          if (
+            buffer &&
+            buffer.length >
+              0
+          ) {
+            return {
+              buffer,
+              usedPath:
+                exactMatch.name,
+            };
+          }
+        }
+      }
+    }
+  } catch (
+    err
+  ) {
+    lastError =
+      err;
+  }
+
+  // 3. Fallback to local disk directory mirror
+  const localDiskCandidates = [
+    path.join(
+      __dirname,
+      "..",
+      "uploads",
+      bucket,
+      cleanFileName
+    ),
+    path.join(
+      __dirname,
+      "..",
+      "uploads",
+      cleanFileName
+    ),
+    path.join(
+      __dirname,
+      "..",
+      "uploads",
+      bucket,
+      storagePath
+    ),
+    path.join(
+      __dirname,
+      "..",
+      storagePath
+    ),
+  ];
+
+  for (
+    const localPath
+    of localDiskCandidates
+  ) {
+    if (
+      fs.existsSync(
+        localPath
+      )
+    ) {
+      try {
+        const localBuffer =
+          fs.readFileSync(
+            localPath
+          );
+
+        if (
+          localBuffer &&
+          localBuffer.length >
+            0
+        ) {
+          return {
+            buffer:
+              localBuffer,
+            usedPath:
+              cleanFileName,
+          };
+        }
+      } catch (
+        readErr
+      ) {
+        lastError =
+          readErr;
+      }
+    }
+  }
+
+  throw (
+    lastError ||
+    new Error(
+      `File was not found in storage bucket: ${bucket}`
+    )
+  );
+}
 
 // ============================================================
 // HELPER: REMOVE LOCAL TEMP FILE
 // ============================================================
-//
-// With the current Supabase upload utility, multer uses
-// memoryStorage(), so req.file.path normally does not exist.
-//
-// Kept for compatibility.
-//
 
-function removeLocalFile(file) {
+function removeLocalFile(
+  file
+) {
   if (
     file &&
     file.path &&
-    fs.existsSync(file.path)
+    fs.existsSync(
+      file.path
+    )
   ) {
     fs.unlink(
       file.path,
@@ -118,10 +427,14 @@ function removeLocalFile(file) {
 // HELPER: FILE EXTENSION
 // ============================================================
 
-function getFileExtension(fileName) {
+function getFileExtension(
+  fileName
+) {
   return path
     .extname(
-      String(fileName || "")
+      String(
+        fileName || ""
+      )
     )
     .toLowerCase();
 }
@@ -130,9 +443,13 @@ function getFileExtension(fileName) {
 // HELPER: MIME TYPE
 // ============================================================
 
-function getMimeType(fileName) {
+function getMimeType(
+  fileName
+) {
   const extension =
-    getFileExtension(fileName);
+    getFileExtension(
+      fileName
+    );
 
   const mimeTypes = {
     ".pdf":
@@ -179,7 +496,9 @@ function getMimeType(fileName) {
   };
 
   return (
-    mimeTypes[extension] ||
+    mimeTypes[
+      extension
+    ] ||
     "application/octet-stream"
   );
 }
@@ -228,7 +547,9 @@ router.get(
       return res.json(
         result.rows[0]
       );
-    } catch (err) {
+    } catch (
+      err
+    ) {
       console.error(
         "Student /me error:",
         err.message
@@ -305,7 +626,9 @@ router.get(
       return res.json(
         result.rows || []
       );
-    } catch (err) {
+    } catch (
+      err
+    ) {
       console.error(
         "Student /faculties error:",
         err.message
@@ -375,7 +698,9 @@ router.get(
       return res.json(
         result.rows[0]
       );
-    } catch (err) {
+    } catch (
+      err
+    ) {
       console.error(
         "Student /faculties/:id error:",
         err.message
@@ -483,7 +808,9 @@ router.post(
         message:
           "Registration request sent successfully.",
       });
-    } catch (err) {
+    } catch (
+      err
+    ) {
       console.error(
         "Student enroll error:",
         err.message
@@ -500,7 +827,7 @@ router.post(
 );
 
 // ============================================================
-// 5. FACULTY ASSIGNMENTS
+// 5. FACULTY ASSIGNMENTS (WITH CONCEALED UNPOSTED MARKS)
 // ============================================================
 
 router.get(
@@ -544,7 +871,8 @@ router.get(
       }
 
       // ------------------------------------------------------
-      // Get assignments + current student's submission
+      // Get assignments + student submission
+      // Conceals final_marks if not posted
       // ------------------------------------------------------
 
       const result =
@@ -572,8 +900,18 @@ router.get(
             s.file_path,
             s.file_original,
             s.submitted_at,
-            s.final_marks,
-            s.posted,
+
+            CASE
+              WHEN s.posted = TRUE OR s.posted = 1::boolean
+                THEN s.final_marks
+              ELSE NULL
+            END AS final_marks,
+
+            COALESCE(
+              s.posted,
+              FALSE
+            ) AS posted,
+
             s.resubmit_count
 
           FROM assignments a
@@ -600,7 +938,9 @@ router.get(
       return res.json(
         result.rows || []
       );
-    } catch (err) {
+    } catch (
+      err
+    ) {
       console.error(
         "Student faculty assignments error:",
         err.message
@@ -617,26 +957,8 @@ router.get(
 );
 
 // ============================================================
-// 5A. PROTECTED QUESTION PAPER VIEW
+// 5A. STUDENT QUESTION PAPER DOWNLOAD
 // ============================================================
-//
-// Student must:
-//   1. Be authenticated.
-//   2. Be accepted under the faculty.
-//
-// Question papers are stored permanently in Supabase Storage.
-//
-// PDF / images / text:
-//   Open directly in browser.
-//
-// DOC/DOCX/PPT/PPTX/XLS/XLSX/ZIP:
-//   Download normally.
-//
-// Render local disk is used only as a fallback for old files.
-//
-// IMPORTANT:
-//   The Supabase `questions` bucket should remain PRIVATE.
-//
 
 router.get(
   "/assignments/:assignmentId/question-paper",
@@ -672,14 +994,14 @@ router.get(
         await db.query(
           `
           SELECT
-            a.id,
-            a.faculty_id,
-            a.question_file,
-            a.question_original
+            id,
+            faculty_id,
+            question_file,
+            question_original
 
-          FROM assignments a
+          FROM assignments
 
-          WHERE a.id = $1
+          WHERE id = $1
           `,
           [
             assignmentId,
@@ -756,7 +1078,9 @@ router.get(
           assignment.question_file
         ).trim();
 
-      if (!storagePath) {
+      if (
+        !storagePath
+      ) {
         return res.status(
           404
         ).json({
@@ -766,100 +1090,27 @@ router.get(
       }
 
       // ------------------------------------------------------
-      // Original file name
+      // Download from Storage
       // ------------------------------------------------------
 
-      const fileName =
-        assignment.question_original ||
-        path.basename(
+      const download =
+        await fetchFileWithFallback(
+          BUCKETS.questions,
           storagePath
         );
 
-      // ------------------------------------------------------
-      // Download from Supabase
-      // ------------------------------------------------------
-
-      let buffer = null;
-
-      try {
-        buffer =
-          await downloadFromSupabase(
-            BUCKETS.questions,
+      const displayName =
+        assignment.question_original ||
+        path.basename(
+          download.usedPath ||
             storagePath
-          );
-      } catch (supabaseErr) {
-        console.warn(
-          "Supabase question paper download failed, checking local storage:",
-          supabaseErr.message
-        );
-
-        // ----------------------------------------------------
-        // Local fallback for old files
-        // ----------------------------------------------------
-
-        const localPath =
-          path.join(
-            __dirname,
-            "..",
-            "uploads",
-            "questions",
-            path.basename(
-              storagePath
-            )
-          );
-
-        if (
-          fs.existsSync(
-            localPath
-          )
-        ) {
-          buffer =
-            fs.readFileSync(
-              localPath
-            );
-        }
-      }
-
-      // ------------------------------------------------------
-      // File not found
-      // ------------------------------------------------------
-
-      if (
-        !buffer ||
-        !buffer.length
-      ) {
-        return res.status(
-          404
-        ).json({
-          error:
-            "Question paper file was not found in storage.",
-        });
-      }
-
-      // ------------------------------------------------------
-      // MIME TYPE
-      // ------------------------------------------------------
+        ) ||
+        "question-paper.pdf";
 
       const mimeType =
         getMimeType(
-          fileName
+          displayName
         );
-
-      // ------------------------------------------------------
-      // Safe file name
-      // ------------------------------------------------------
-
-      const safeFileName =
-        String(
-          fileName
-        ).replace(
-          /["\r\n]/g,
-          "_"
-        );
-
-      // ------------------------------------------------------
-      // Response headers
-      // ------------------------------------------------------
 
       res.setHeader(
         "Content-Type",
@@ -868,73 +1119,27 @@ router.get(
 
       res.setHeader(
         "Content-Length",
-        buffer.length
+        download.buffer.length
       );
 
-      // ------------------------------------------------------
-      // Browser Preview vs Download
-      // ------------------------------------------------------
-      //
-      // PDF:
-      //   Opens in browser PDF viewer.
-      //
-      // Images:
-      //   Opens directly in browser.
-      //
-      // Text:
-      //   Opens directly in browser.
-      //
-      // Other office/archive files:
-      //   Download normally.
-      //
-
-      const previewable =
-        mimeType ===
-          "application/pdf" ||
-        mimeType.startsWith(
-          "image/"
-        ) ||
-        mimeType.startsWith(
-          "text/"
-        );
-
-      if (
-        previewable
-      ) {
-        res.setHeader(
-          "Content-Disposition",
-          `inline; filename="${safeFileName}"`
-        );
-      } else {
-        res.setHeader(
-          "Content-Disposition",
-          `attachment; filename="${safeFileName}"`
-        );
-      }
-
-      // ------------------------------------------------------
-      // Security / Cache Headers
-      // ------------------------------------------------------
+      res.setHeader(
+        "Content-Disposition",
+        `inline; filename="${encodeURIComponent(
+          displayName
+        )}"`
+      );
 
       res.setHeader(
         "Cache-Control",
-        "private, no-store, max-age=0"
-      );
-
-      res.setHeader(
-        "Pragma",
-        "no-cache"
-      );
-
-      res.setHeader(
-        "X-Content-Type-Options",
-        "nosniff"
+        "private, no-cache, no-store, must-revalidate"
       );
 
       return res.send(
-        buffer
+        download.buffer
       );
-    } catch (err) {
+    } catch (
+      err
+    ) {
       console.error(
         "VIEW QUESTION PAPER ERROR:",
         err.message
@@ -944,10 +1149,11 @@ router.get(
         !res.headersSent
       ) {
         return res.status(
-          500
+          404
         ).json({
           error:
-            "Could not open question paper.",
+            "Question paper file was not found in storage: " +
+            err.message,
         });
       }
     }
@@ -955,7 +1161,7 @@ router.get(
 );
 
 // ============================================================
-// 5B. PROTECTED SUBMISSION VIEW
+// 5B. STUDENT SUBMISSION FILE DOWNLOAD
 // ============================================================
 
 router.get(
@@ -988,13 +1194,15 @@ router.get(
         await db.query(
           `
           SELECT
-            s.id,
-            s.student_id,
-            s.file_path,
-            s.file_original
-          FROM submissions s
-          WHERE s.id = $1
-            AND s.student_id = $2
+            id,
+            student_id,
+            file_path,
+            file_original
+
+          FROM submissions
+
+          WHERE id = $1
+            AND student_id = $2
           `,
           [
             submissionId,
@@ -1009,14 +1217,19 @@ router.get(
           404
         ).json({
           error:
-            "Submission not found.",
+            "Submission not found or access denied.",
         });
       }
 
       const submission =
         submissionResult.rows[0];
 
-      if (!submission.file_path) {
+      if (
+        !submission.file_path ||
+        !String(
+          submission.file_path
+        ).trim()
+      ) {
         return res.status(
           404
         ).json({
@@ -1030,89 +1243,53 @@ router.get(
           submission.file_path
         ).trim();
 
-      const fileName =
-        submission.file_original ||
-        path.basename(
+      const download =
+        await fetchFileWithFallback(
+          BUCKETS.answers,
           storagePath
         );
 
-      let buffer = null;
-
-      try {
-        buffer =
-          await downloadFromSupabase(
-            BUCKETS.answers,
+      const displayName =
+        submission.file_original ||
+        path.basename(
+          download.usedPath ||
             storagePath
-          );
-      } catch (supabaseErr) {
-        console.warn(
-          "Supabase answer download warning, checking local storage:",
-          supabaseErr.message
+        ) ||
+        "submission-file.pdf";
+
+      const mimeType =
+        getMimeType(
+          displayName
         );
-
-        const localPath =
-          path.join(
-            __dirname,
-            "..",
-            "uploads",
-            "answers",
-            path.basename(
-              storagePath
-            )
-          );
-
-        if (
-          fs.existsSync(
-            localPath
-          )
-        ) {
-          buffer =
-            fs.readFileSync(
-              localPath
-            );
-        }
-      }
-
-      if (!buffer) {
-        return res.status(
-          404
-        ).json({
-          error:
-            "Submission file was not found in storage.",
-        });
-      }
 
       res.setHeader(
         "Content-Type",
-        getMimeType(
-          fileName
-        )
+        mimeType
       );
 
       res.setHeader(
         "Content-Length",
-        buffer.length
+        download.buffer.length
       );
 
       res.setHeader(
         "Content-Disposition",
-        `attachment; filename="${String(
-          fileName
-        ).replace(
-          /["\r\n]/g,
-          "_"
+        `inline; filename="${encodeURIComponent(
+          displayName
         )}"`
       );
 
       res.setHeader(
         "Cache-Control",
-        "private, no-store"
+        "private, no-cache, no-store, must-revalidate"
       );
 
       return res.send(
-        buffer
+        download.buffer
       );
-    } catch (err) {
+    } catch (
+      err
+    ) {
       console.error(
         "DOWNLOAD SUBMISSION ERROR:",
         err.message
@@ -1122,10 +1299,11 @@ router.get(
         !res.headersSent
       ) {
         return res.status(
-          500
+          404
         ).json({
           error:
-            "Could not download submission.",
+            "Submission file was not found in storage: " +
+            err.message,
         });
       }
     }
@@ -1135,19 +1313,6 @@ router.get(
 // ============================================================
 // 6. SUBMIT ASSIGNMENT
 // ============================================================
-//
-// IMPORTANT:
-//
-// Student submissions are stored in Supabase:
-//
-//   bucket = answers
-//
-// PostgreSQL stores:
-//
-//   submissions.file_path
-//
-// No permanent student file is stored on Render.
-//
 
 router.post(
   "/assignments/:assignmentId/submit",
@@ -1156,7 +1321,9 @@ router.post(
     req,
     res
   ) => {
-    if (!req.file) {
+    if (
+      !req.file
+    ) {
       return res.status(
         400
       ).json({
@@ -1178,7 +1345,6 @@ router.post(
           `
           SELECT *
           FROM assignments
-
           WHERE id = $1
           `,
           [
@@ -1269,11 +1435,16 @@ router.post(
         ).getTime();
 
       if (
-        assignment.closed === true ||
-        assignment.closed === 1 ||
+        assignment.closed ===
+          true ||
+        assignment.closed ===
+          1 ||
         (
-          !Number.isNaN(dueMs) &&
-          dueMs < Date.now()
+          !Number.isNaN(
+            dueMs
+          ) &&
+          dueMs <
+            Date.now()
         )
       ) {
         removeLocalFile(
@@ -1325,7 +1496,7 @@ router.post(
       }
 
       // ------------------------------------------------------
-      // UPLOAD TO SUPABASE
+      // Upload to Supabase answers bucket
       // ------------------------------------------------------
 
       const uploaded =
@@ -1338,7 +1509,7 @@ router.post(
         uploaded.path;
 
       // ------------------------------------------------------
-      // SAVE SUBMISSION
+      // Save submission
       // ------------------------------------------------------
 
       await db.query(
@@ -1350,7 +1521,9 @@ router.post(
           file_path,
           file_original,
           file_size,
-          submitted_at
+          submitted_at,
+          graded,
+          posted
         )
         VALUES
         (
@@ -1359,7 +1532,9 @@ router.post(
           $3,
           $4,
           $5,
-          CURRENT_TIMESTAMP
+          CURRENT_TIMESTAMP,
+          FALSE,
+          FALSE
         )
         `,
         [
@@ -1374,16 +1549,13 @@ router.post(
         ]
       );
 
-      // ------------------------------------------------------
-      // SUCCESS
-      // ------------------------------------------------------
-
       console.log(
         `[SUBMISSION] Student ${req.user.id} uploaded ${uploaded.path}`
       );
 
       return res.json({
-        success: true,
+        success:
+          true,
 
         message:
           "Submission uploaded successfully.",
@@ -1400,11 +1572,9 @@ router.post(
             "supabase",
         },
       });
-    } catch (err) {
-      // ------------------------------------------------------
-      // Clean orphan Supabase file
-      // ------------------------------------------------------
-
+    } catch (
+      err
+    ) {
       if (
         uploadedStoragePath
       ) {
@@ -1454,10 +1624,6 @@ router.post(
     res
   ) => {
     try {
-      // ------------------------------------------------------
-      // Get submission + student email
-      // ------------------------------------------------------
-
       const result =
         await db.query(
           `
@@ -1511,10 +1677,6 @@ router.post(
         });
       }
 
-      // ------------------------------------------------------
-      // Generate OTP
-      // ------------------------------------------------------
-
       const otp =
         Math.floor(
           100000 +
@@ -1522,19 +1684,11 @@ router.post(
               900000
         ).toString();
 
-      // ------------------------------------------------------
-      // Expiry
-      // ------------------------------------------------------
-
       const expiresAt =
         new Date(
           Date.now() +
             10 * 60 * 1000
         );
-
-      // ------------------------------------------------------
-      // Save OTP
-      // ------------------------------------------------------
 
       await db.query(
         `
@@ -1553,10 +1707,6 @@ router.post(
         ]
       );
 
-      // ------------------------------------------------------
-      // Send OTP
-      // ------------------------------------------------------
-
       await sendOtpEmail(
         student.email,
         otp,
@@ -1574,7 +1724,9 @@ router.post(
         message:
           "OTP sent to your registered email address.",
       });
-    } catch (err) {
+    } catch (
+      err
+    ) {
       console.error(
         "MODIFICATION OTP ERROR:",
         err.message
@@ -1593,12 +1745,6 @@ router.post(
 // ============================================================
 // 8. MODIFY / REPLACE SUBMISSION
 // ============================================================
-//
-// The replacement file goes to the same private `answers`
-// Supabase bucket.
-//
-// Old file is deleted only after the database update succeeds.
-//
 
 router.post(
   "/submissions/:submissionId/modify",
@@ -1607,7 +1753,9 @@ router.post(
     req,
     res
   ) => {
-    if (!req.file) {
+    if (
+      !req.file
+    ) {
       return res.status(
         400
       ).json({
@@ -1626,10 +1774,6 @@ router.post(
       null;
 
     try {
-      // ------------------------------------------------------
-      // Get OTP
-      // ------------------------------------------------------
-
       const userResult =
         await db.query(
           `
@@ -1664,10 +1808,6 @@ router.post(
       const user =
         userResult.rows[0];
 
-      // ------------------------------------------------------
-      // Validate OTP
-      // ------------------------------------------------------
-
       if (
         !user.email_otp ||
         user.email_otp !==
@@ -1684,10 +1824,6 @@ router.post(
             "Invalid OTP code.",
         });
       }
-
-      // ------------------------------------------------------
-      // Check OTP expiry
-      // ------------------------------------------------------
 
       if (
         !user.otp_expires_at ||
@@ -1708,10 +1844,6 @@ router.post(
         });
       }
 
-      // ------------------------------------------------------
-      // Find submission
-      // ------------------------------------------------------
-
       const submissionResult =
         await db.query(
           `
@@ -1719,7 +1851,6 @@ router.post(
             s.id,
             s.assignment_id,
             s.file_path,
-
             a.due_date,
             a.due_time,
             a.closed
@@ -1764,10 +1895,6 @@ router.post(
             ).trim()
           : null;
 
-      // ------------------------------------------------------
-      // Check deadline
-      // ------------------------------------------------------
-
       const dueTime =
         submission.due_time ||
         "23:59:59";
@@ -1789,11 +1916,16 @@ router.post(
         ).getTime();
 
       if (
-        submission.closed === true ||
-        submission.closed === 1 ||
+        submission.closed ===
+          true ||
+        submission.closed ===
+          1 ||
         (
-          !Number.isNaN(dueMs) &&
-          dueMs < Date.now()
+          !Number.isNaN(
+            dueMs
+          ) &&
+          dueMs <
+            Date.now()
         )
       ) {
         removeLocalFile(
@@ -1808,10 +1940,6 @@ router.post(
         });
       }
 
-      // ------------------------------------------------------
-      // Upload replacement to Supabase
-      // ------------------------------------------------------
-
       const uploaded =
         await uploadToSupabase(
           req.file,
@@ -1821,10 +1949,6 @@ router.post(
       newStoragePath =
         uploaded.path;
 
-      // ------------------------------------------------------
-      // Update database
-      // ------------------------------------------------------
-
       await db.query(
         `
         UPDATE submissions
@@ -1833,23 +1957,17 @@ router.post(
           file_path = $1,
           file_original = $2,
           file_size = $3,
-
-          submitted_at =
-            CURRENT_TIMESTAMP,
-
+          submitted_at = CURRENT_TIMESTAMP,
           resubmit_count =
             COALESCE(
               resubmit_count,
               0
             ) + 1,
-
           graded = FALSE,
-          posted = 0,
-
+          posted = FALSE,
           final_marks = NULL,
           auto_marks = NULL,
           auto_feedback = NULL,
-
           similarity_pct = NULL,
           duplicate_flag = FALSE
 
@@ -1858,23 +1976,15 @@ router.post(
         `,
         [
           uploaded.path,
-
           uploaded.originalName ||
             req.file.originalname,
-
           uploaded.size ||
             req.file.size ||
             req.file.buffer.length,
-
           req.params.submissionId,
-
           req.user.id,
         ]
       );
-
-      // ------------------------------------------------------
-      // Delete old Supabase file
-      // ------------------------------------------------------
 
       if (
         oldStoragePath &&
@@ -1895,10 +2005,6 @@ router.post(
           );
         }
       }
-
-      // ------------------------------------------------------
-      // Consume OTP
-      // ------------------------------------------------------
 
       await db.query(
         `
@@ -1926,11 +2032,9 @@ router.post(
         message:
           "Submission updated successfully.",
       });
-    } catch (err) {
-      // ------------------------------------------------------
-      // Remove newly uploaded file on failure
-      // ------------------------------------------------------
-
+    } catch (
+      err
+    ) {
       if (
         newStoragePath
       ) {
@@ -1986,7 +2090,6 @@ router.get(
           SELECT
             e.id,
             e.status,
-
             u.name,
             u.subject,
             u.slot,
@@ -2011,7 +2114,9 @@ router.get(
       return res.json(
         result.rows || []
       );
-    } catch (err) {
+    } catch (
+      err
+    ) {
       console.error(
         "Student /my-courses error:",
         err.message
@@ -2044,9 +2149,7 @@ router.get(
           SELECT
             a.title,
             a.total_marks,
-
             u.name AS faculty_name,
-
             s.submitted_at,
             s.final_marks,
             s.posted
@@ -2062,7 +2165,10 @@ router.get(
                a.faculty_id
 
           WHERE s.student_id = $1
-            AND s.posted = 1
+            AND (
+              s.posted = TRUE
+              OR s.posted = 1::boolean
+            )
 
           ORDER BY
             s.submitted_at DESC
@@ -2075,7 +2181,9 @@ router.get(
       return res.json(
         result.rows || []
       );
-    } catch (err) {
+    } catch (
+      err
+    ) {
       console.error(
         "Student /marks error:",
         err.message
@@ -2128,17 +2236,14 @@ router.get(
           JOIN enrollments en
             ON en.faculty_id =
                e.faculty_id
-
            AND en.student_id =
                $1
-
            AND en.status =
                'accepted'
 
           LEFT JOIN exam_attempts att
             ON att.exam_id =
                e.id
-
            AND att.student_id =
                $1
 
@@ -2154,7 +2259,9 @@ router.get(
       return res.json(
         result.rows || []
       );
-    } catch (err) {
+    } catch (
+      err
+    ) {
       console.error(
         "Student /exams error:",
         err.message
