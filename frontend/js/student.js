@@ -44,15 +44,11 @@
   }
 
   // ============================================================
-  // OPEN PROTECTED FILE
+  // OPEN / DOWNLOAD PROTECTED FILE
   // ============================================================
 
-  async function openProtectedFile(
-    url,
-    fileName = "document"
-  ) {
-    const token =
-      getAuthToken();
+  async function openProtectedFile(url, fileName = "document") {
+    const token = getAuthToken();
 
     if (!token) {
       notice(
@@ -63,201 +59,102 @@
       return;
     }
 
-    // Append token query parameter as fallback for browser requests
-    const separator =
-      url.includes("?")
-        ? "&"
-        : "?";
-
-    const authedUrl =
-      `${url}${separator}token=${encodeURIComponent(token)}`;
+    const separator = url.includes("?") ? "&" : "?";
+    const authedUrl = `${url}${separator}token=${encodeURIComponent(token)}`;
 
     let blobUrl = null;
 
     try {
-      const response =
-        await fetch(
-          authedUrl,
-          {
-            method: "GET",
-
-            headers: {
-              Authorization:
-                "Bearer " + token,
-              Accept: "*/*",
-            },
-
-            credentials:
-              "same-origin",
-
-            cache: "no-store",
-          }
-        );
+      const response = await fetch(authedUrl, {
+        method: "GET",
+        headers: {
+          Authorization: "Bearer " + token,
+          Accept: "*/*",
+        },
+        credentials: "same-origin",
+        cache: "no-store",
+      });
 
       if (!response.ok) {
-        let message =
-          `Request failed (${response.status})`;
+        let message = `Request failed (${response.status})`;
 
         try {
-          const contentType =
-            response.headers.get(
-              "content-type"
-            ) || "";
-
-          if (
-            contentType.includes(
-              "application/json"
-            )
-          ) {
-            const data =
-              await response.json();
-
-            message =
-              data.error ||
-              data.message ||
-              message;
+          const contentType = response.headers.get("content-type") || "";
+          if (contentType.includes("application/json")) {
+            const data = await response.json();
+            message = data.error || data.message || message;
           } else {
-            const text =
-              await response.text();
-
-            if (text) {
-              message = text;
-            }
+            const text = await response.text();
+            if (text) message = text;
           }
-        } catch {
-          // Keep default message.
-        }
+        } catch (_) {}
 
-        throw new Error(
-          message
-        );
+        throw new Error(message);
       }
 
-      const blob =
-        await response.blob();
+      const blob = await response.blob();
 
-      if (
-        !blob ||
-        !blob.size
-      ) {
-        throw new Error(
-          "The file returned by the server is empty."
-        );
+      if (!blob || !blob.size) {
+        throw new Error("The file returned by the server is empty.");
       }
-
-      blobUrl =
-        URL.createObjectURL(
-          blob
-        );
 
       const mimeType =
         blob.type ||
-        response.headers.get(
-          "content-type"
-        ) ||
-        "";
+        response.headers.get("content-type") ||
+        "application/octet-stream";
 
-      const canPreview =
-        mimeType.startsWith(
-          "application/pdf"
-        ) ||
-        mimeType.startsWith(
-          "image/"
-        ) ||
-        mimeType.startsWith(
-          "text/"
-        );
+      blobUrl = URL.createObjectURL(blob);
 
-      if (canPreview) {
-        const newWindow =
-          window.open(
-            blobUrl,
-            "_blank"
-          );
+      const isPdfOrImage =
+        mimeType.startsWith("application/pdf") ||
+        mimeType.startsWith("image/") ||
+        mimeType.startsWith("text/");
 
-        if (!newWindow) {
-          const link =
-            document.createElement(
-              "a"
-            );
-
-          link.href =
-            blobUrl;
-
-          link.download =
-            fileName ||
-            "document";
-
-          document.body.appendChild(
-            link
-          );
-
-          link.click();
-
-          link.remove();
-
-          notice(
-            "Download started",
-            "Your browser blocked the preview, so the file download was started."
-          );
+      if (isPdfOrImage) {
+        const newTab = window.open(blobUrl, "_blank");
+        if (newTab) {
+          newTab.focus();
+          notice("Opened", `${fileName} opened in a new tab.`);
+          return;
         }
-      } else {
-        const link =
-          document.createElement(
-            "a"
-          );
-
-        link.href =
-          blobUrl;
-
-        link.download =
-          fileName ||
-          "document";
-
-        document.body.appendChild(
-          link
-        );
-
-        link.click();
-
-        link.remove();
-
-        notice(
-          "Download started",
-          `${fileName || "File"} is being downloaded.`
-        );
       }
 
-      setTimeout(
-        () => {
-          if (blobUrl) {
-            URL.revokeObjectURL(
-              blobUrl
-            );
-          }
-        },
-        60000
-      );
+      const downloadLink = document.createElement("a");
+      downloadLink.href = blobUrl;
+      downloadLink.download = fileName || "document";
+      downloadLink.style.display = "none";
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      downloadLink.remove();
 
-      blobUrl = null;
+      notice("Download started", `${fileName} is being downloaded.`);
     } catch (err) {
-      console.error(
-        "OPEN PROTECTED FILE ERROR:",
-        err
-      );
+      console.warn("Direct blob download failed, attempting native browser fallback:", err.message);
 
-      if (blobUrl) {
-        URL.revokeObjectURL(
-          blobUrl
+      try {
+        const link = document.createElement("a");
+        link.href = authedUrl;
+        link.download = fileName || "document";
+        link.target = "_blank";
+        link.style.display = "none";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      } catch (fallbackErr) {
+        notice(
+          "Could not open file",
+          err.message || "The requested file could not be opened.",
+          "err"
         );
       }
-
-      notice(
-        "Could not open file",
-        err.message ||
-          "The requested file could not be opened.",
-        "err"
-      );
+    } finally {
+      if (blobUrl) {
+        setTimeout(() => {
+          try {
+            URL.revokeObjectURL(blobUrl);
+          } catch (_) {}
+        }, 120000);
+      }
     }
   }
 
@@ -1737,9 +1634,7 @@
                         r.posted
                           ? `
                             <span class="marks">
-                              ${escapeHtml(
-                                r.final_marks
-                              )}/${escapeHtml(
+                              ${escapeHtml(                                     r.final_marks                                   )}/${escapeHtml(
                                 r.total_marks
                               )}
                             </span>
