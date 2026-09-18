@@ -63,22 +63,52 @@
   //
 
   async function openProtectedFile(
-    url,
-    fileName = "document"
-  ) {
-    const token =
-      getAuthToken();
+  url,
+  fileName = "document"
+) {
+  const token = getAuthToken();
 
-    if (!token) {
-      notice(
-        "Session expired",
-        "Please log in again.",
-        "err"
-      );
+  if (!token) {
+    notice(
+      "Session expired",
+      "Please log in again.",
+      "err"
+    );
+    return;
+  }
 
-      return;
-    }
+  try {
+    const separator = url.includes("?")
+      ? "&"
+      : "?";
 
+    const authedUrl =
+      `${url}${separator}token=${encodeURIComponent(token)}`;
+
+    const link = document.createElement("a");
+
+    link.href = authedUrl;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+  } catch (err) {
+    console.error(
+      "OPEN PROTECTED FILE ERROR:",
+      err
+    );
+
+    notice(
+      "Could not open file",
+      err.message ||
+        "The requested file could not be opened.",
+      "err"
+    );
+  }
+}
     // ----------------------------------------------------------
     // Open blank tab immediately
     // ----------------------------------------------------------
