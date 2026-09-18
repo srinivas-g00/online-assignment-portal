@@ -715,10 +715,23 @@
         undefined;
 
     const isPosted =
+      a.posted === true ||
       Number(
         a.posted
-      ) === 1 ||
-      a.posted === true;
+      ) === 1;
+
+    const token = getAuthToken();
+    const base = getApiBase();
+
+    const questionDownloadUrl = `${base}/api/student/assignments/${encodeURIComponent(
+      a.id
+    )}/question-paper?token=${encodeURIComponent(token)}`;
+
+    const submissionDownloadUrl = hasSubmission
+      ? `${base}/api/student/submissions/${encodeURIComponent(
+          a.submission_id
+        )}/file?token=${encodeURIComponent(token)}`
+      : "#";
 
     return `
       <div
@@ -783,19 +796,19 @@
                 "
               >
 
-                <button
-                  class="btn secondary"
-                  data-view-question="${escapeHtml(
-                    a.id
-                  )}"
-                  data-question-name="${escapeHtml(
+                <a
+                  href="${questionDownloadUrl}"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  download="${escapeHtml(
                     a.question_original ||
                     "question-paper"
                   )}"
-                  type="button"
+                  class="btn secondary"
+                  style="text-decoration:none; display:inline-flex; align-items:center;"
                 >
                   📄 View question paper
-                </button>
+                </a>
 
               </div>
             `
@@ -821,6 +834,10 @@
                     margin:0 0 6px 0;
                     font-size:14px;
                     color:#1e293b;
+                    display:flex;
+                    align-items:center;
+                    gap:8px;
+                    flex-wrap:wrap;
                   "
                 >
 
@@ -828,19 +845,18 @@
                     Your Submission:
                   </strong>
 
-                  <button
-                    class="btn secondary"
-                    data-view-own-submission="${escapeHtml(
-                      a.submission_id
-                    )}"
-                    data-own-file-name="${escapeHtml(
+                  <a
+                    href="${submissionDownloadUrl}"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    download="${escapeHtml(
                       subDisplayName
                     )}"
-                    type="button"
-                    style="margin-left:8px;"
+                    class="btn secondary"
+                    style="text-decoration:none; display:inline-flex; align-items:center;"
                   >
                     📄 View / Download
-                  </button>
+                  </a>
 
                 </p>
 
@@ -904,27 +920,9 @@
                           Result posted
                         </span>
                       `
-                      : hasMarks
-                      ? `
-                        <b
-                          style="
-                            color:#d97706;
-                          "
-                        >
-                          ${escapeHtml(
-                            a.final_marks
-                          )}/${escapeHtml(
-                            a.total_marks
-                          )}
-                        </b>
-
-                        <em>
-                          (not posted yet)
-                        </em>
-                      `
                       : `
                         <em>
-                          not posted yet
+                          Not posted yet
                         </em>
                       `
                   }
@@ -1009,92 +1007,6 @@
   // ============================================================
 
   function bindAssignment(a) {
-
-    // ----------------------------------------------------------
-    // VIEW QUESTION PAPER
-    // ----------------------------------------------------------
-
-    const questionBtn =
-      findButtonByData(
-        "view-question",
-        a.id
-      );
-
-    if (questionBtn) {
-      questionBtn.onclick =
-        async () => {
-          const originalText =
-            questionBtn.textContent;
-
-          questionBtn.disabled =
-            true;
-
-          questionBtn.textContent =
-            "Opening...";
-
-          try {
-            const url =
-              `${getApiBase()}/api/student/assignments/${encodeURIComponent(
-                a.id
-              )}/question-paper`;
-
-            await openProtectedFile(
-              url,
-              a.question_original ||
-                "question-paper"
-            );
-          } finally {
-            questionBtn.disabled =
-              false;
-
-            questionBtn.textContent =
-              originalText;
-          }
-        };
-    }
-
-    // ----------------------------------------------------------
-    // VIEW OWN SUBMISSION
-    // ----------------------------------------------------------
-
-    const ownSubmissionBtn =
-      findButtonByData(
-        "view-own-submission",
-        a.submission_id
-      );
-
-    if (ownSubmissionBtn) {
-      ownSubmissionBtn.onclick =
-        async () => {
-          const originalText =
-            ownSubmissionBtn.textContent;
-
-          ownSubmissionBtn.disabled =
-            true;
-
-          ownSubmissionBtn.textContent =
-            "Opening...";
-
-          try {
-            const url =
-              `${getApiBase()}/api/student/submissions/${encodeURIComponent(
-                a.submission_id
-              )}/file`;
-
-            await openProtectedFile(
-              url,
-              a.file_original ||
-                "student-submission"
-            );
-          } finally {
-            ownSubmissionBtn.disabled =
-              false;
-
-            ownSubmissionBtn.textContent =
-              originalText;
-          }
-        };
-    }
 
     // ----------------------------------------------------------
     // SUBMIT ASSIGNMENT
@@ -1634,7 +1546,7 @@
                         r.posted
                           ? `
                             <span class="marks">
-                              ${escapeHtml(                                     r.final_marks                                   )}/${escapeHtml(
+                              ${escapeHtml(                                 r.final_marks                               )}/${escapeHtml(
                                 r.total_marks
                               )}
                             </span>
