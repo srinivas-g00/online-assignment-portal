@@ -385,12 +385,8 @@
   }
 
   // ============================================================
-  // ASSIGNMENTS LIST (WITH DELETE BUTTON)
+  // ASSIGNMENTS LIST (WITH SIDE-BY-SIDE DELETE BUTTON)
   // ============================================================
-
-  // ============================================================
-// ASSIGNMENTS LIST (WITH SIDE-BY-SIDE DELETE BUTTON)
-// ============================================================
 
   async function loadAssignments() {
     try {
@@ -574,6 +570,9 @@
       );
     }
   }
+
+  // Expose to window for testing / external console access
+  window.loadAssignments = loadAssignments;
 
   // ============================================================
   // OPEN ASSIGNMENT (WITH IN-VIEW DELETE)
@@ -854,6 +853,7 @@
                           undefined;
 
                       const posted =
+                        s.posted === true ||
                         Number(
                           s.posted
                         ) === 1;
@@ -1770,10 +1770,7 @@
                     </td>
 
                     <td>
-                      ${escapeHtml(
-                        examDate
-                      )}
-                      ${escapeHtml(
+                      ${escapeHtml(                         examDate                       )}${escapeHtml(
                         startTime
                       )}
                     </td>
@@ -1961,6 +1958,7 @@
                   ) || 0;
 
                 const posted =
+                  r.posted === true ||
                   Number(
                     r.posted
                   ) === 1;

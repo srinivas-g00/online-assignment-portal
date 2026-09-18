@@ -1997,7 +1997,7 @@ router.post(
             auto_marks = $4,
             auto_feedback = $5,
             graded = TRUE,
-            posted = 0
+            posted = FALSE
 
           WHERE id = $6
           `,
@@ -2134,7 +2134,7 @@ router.put(
         SET
           final_marks = $1,
           graded = TRUE,
-          posted = 0
+          posted = FALSE
 
         WHERE id = $2
         `,
@@ -2239,7 +2239,7 @@ router.post(
         UPDATE submissions
 
         SET
-          posted = 1,
+          posted = TRUE,
           posted_at =
             CURRENT_TIMESTAMP
 
