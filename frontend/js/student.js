@@ -1046,198 +1046,132 @@
   // BIND ASSIGNMENT BUTTONS
   // ============================================================
 
-  function bindAssignment(
-    a
-  ) {
-
+  function bindAssignment(a) {
     // ----------------------------------------------------------
-    // VIEW QUESTION PAPER
+    // 1. VIEW / DOWNLOAD QUESTION PAPER
     // ----------------------------------------------------------
+    const questionBtn = findButtonByData("view-question", a.id);
+    if (questionBtn) {
+      questionBtn.onclick = async (e) => {
+        e.preventDefault();
+        const originalText = questionBtn.textContent;
+        questionBtn.disabled = true;
+        questionBtn.textContent = "Downloading...";
 
-    const questionBtn =
-      findButtonByData(
-        "view-question",
-        a.id
-      );
+        try {
+          const token = getAuthToken();
+          const url = `${getApiBase()}/api/student/assignments/${encodeURIComponent(a.id)}/question-paper?token=${encodeURIComponent(token)}`;
+          
+          const res = await fetch(url, {
+            headers: { Authorization: "Bearer " + token }
+          });
 
-    if (
-      questionBtn
-    ) {
+          if (!res.ok) throw new Error(`Download failed with status ${res.status}`);
 
-      questionBtn.onclick =
-        () => {
-
-          const url =
-            `${getApiBase()}/api/student/assignments/${encodeURIComponent(
-              a.id
-            )}/question-paper`;
-
-          openProtectedFile(
-            url,
-            a.question_original ||
-              "question-paper"
-          );
-        };
+          const blob = await res.blob();
+          const downloadUrl = window.URL.createObjectURL(blob);
+          const aTag = document.createElement("a");
+          aTag.href = downloadUrl;
+          aTag.download = a.question_original || `assignment-${a.id}-question.pdf`;
+          document.body.appendChild(aTag);
+          aTag.click();
+          aTag.remove();
+          window.URL.revokeObjectURL(downloadUrl);
+        } catch (err) {
+          console.error("Question download error:", err);
+          notice("Error", "Could not download question paper: " + err.message, "err");
+        } finally {
+          questionBtn.disabled = false;
+          questionBtn.textContent = originalText;
+        }
+      };
     }
 
     // ----------------------------------------------------------
-    // VIEW OWN SUBMISSION
+    // 2. VIEW / DOWNLOAD OWN SUBMISSION
     // ----------------------------------------------------------
+    const ownSubmissionBtn = findButtonByData("view-own-submission", a.submission_id);
+    if (ownSubmissionBtn) {
+      ownSubmissionBtn.onclick = async (e) => {
+        e.preventDefault();
+        const originalText = ownSubmissionBtn.textContent;
+        ownSubmissionBtn.disabled = true;
+        ownSubmissionBtn.textContent = "Downloading...";
 
-    const ownSubmissionBtn =
-      findButtonByData(
-        "view-own-submission",
-        a.submission_id
-      );
+        try {
+          const token = getAuthToken();
+          const url = `${getApiBase()}/api/student/submissions/${encodeURIComponent(a.submission_id)}/file?token=${encodeURIComponent(token)}`;
+          
+          const res = await fetch(url, {
+            headers: { Authorization: "Bearer " + token }
+          });
 
-    if (
-      ownSubmissionBtn
-    ) {
+          if (!res.ok) throw new Error(`Download failed with status ${res.status}`);
 
-      ownSubmissionBtn.onclick =
-        () => {
-
-          const url =
-            `${getApiBase()}/api/student/submissions/${encodeURIComponent(
-              a.submission_id
-            )}/file`;
-
-          openProtectedFile(
-            url,
-            a.file_original ||
-              "student-submission"
-          );
-        };
+          const blob = await res.blob();
+          const downloadUrl = window.URL.createObjectURL(blob);
+          const aTag = document.createElement("a");
+          aTag.href = downloadUrl;
+          aTag.download = a.file_original || `submission-${a.submission_id}.pdf`;
+          document.body.appendChild(aTag);
+          aTag.click();
+          aTag.remove();
+          window.URL.revokeObjectURL(downloadUrl);
+        } catch (err) {
+          console.error("Submission download error:", err);
+          notice("Error", "Could not download submission: " + err.message, "err");
+        } finally {
+          ownSubmissionBtn.disabled = false;
+          ownSubmissionBtn.textContent = originalText;
+        }
+      };
     }
 
     // ----------------------------------------------------------
-    // SUBMIT ASSIGNMENT
+    // 3. SUBMIT ASSIGNMENT
     // ----------------------------------------------------------
+    const submitBtn = findButtonByData("submit", a.id);
+    if (submitBtn) {
+      submitBtn.onclick = async () => {
+        const fileInput = document.getElementById(`file-${a.id}`);
+        const file = fileInput ? fileInput.files[0] : null;
 
-    const submitBtn =
-      findButtonByData(
-        "submit",
-        a.id
-      );
+        if (!file) {
+          return notice("No file chosen", "Select a file to upload.", "err");
+        }
 
-    if (
-      submitBtn
-    ) {
+        if (file.size > 15 * 1024 * 1024) {
+          return notice("File too large", "Maximum allowed size is 15MB.", "err");
+        }
 
-      submitBtn.onclick =
-        async () => {
+        const fd = new FormData();
+        fd.append("file", file);
 
-          const fileInput =
-            document.getElementById(
-              `file-${a.id}`
-            );
+        try {
+          submitBtn.disabled = true;
+          submitBtn.textContent = "Uploading...";
 
-          const file =
-            fileInput
-              ? fileInput.files[0]
-              : null;
-
-          if (!file) {
-
-            return notice(
-              "No file chosen",
-              "Select a file to upload.",
-              "err"
-            );
-          }
-
-          if (
-            file.size >
-            15 *
-              1024 *
-              1024
-          ) {
-
-            return notice(
-              "File too large",
-              "Maximum allowed size is 15MB.",
-              "err"
-            );
-          }
-
-          const fd =
-            new FormData();
-
-          fd.append(
-            "file",
-            file
+          await api(
+            `/api/student/assignments/${encodeURIComponent(a.id)}/submit`,
+            { method: "POST", isForm: true, body: fd }
           );
 
-          try {
-
-            submitBtn.disabled =
-              true;
-
-            submitBtn.textContent =
-              "Uploading...";
-
-            await api(
-              `/api/student/assignments/${encodeURIComponent(
-                a.id
-              )}/submit`,
-              {
-                method:
-                  "POST",
-
-                isForm:
-                  true,
-
-                body:
-                  fd,
-              }
-            );
-
-            notice(
-              "Submitted",
-              "Your answer was submitted successfully."
-            );
-
-            await openFaculty(
-              a.faculty_id
-            );
-
-          } catch (e) {
-
-            notice(
-              "Submission failed",
-              e.message ||
-                "Could not submit the assignment.",
-              "err"
-            );
-
-            submitBtn.disabled =
-              false;
-
-            submitBtn.textContent =
-              "Submit answer";
-          }
-        };
+          notice("Submitted", "Your answer was submitted successfully.");
+          await openFaculty(a.faculty_id);
+        } catch (e) {
+          notice("Submission failed", e.message || "Could not submit the assignment.", "err");
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Submit answer";
+        }
+      };
     }
 
     // ----------------------------------------------------------
-    // MODIFY SUBMISSION
+    // 4. MODIFY SUBMISSION
     // ----------------------------------------------------------
-
-    const modifyBtn =
-      findButtonByData(
-        "modify",
-        a.id
-      );
-
-    if (
-      modifyBtn
-    ) {
-
-      modifyBtn.onclick =
-        () =>
-          requestModifyOtp(
-            a
-          );
+    const modifyBtn = findButtonByData("modify", a.id);
+    if (modifyBtn) {
+      modifyBtn.onclick = () => requestModifyOtp(a);
     }
   }
 
