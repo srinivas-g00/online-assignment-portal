@@ -430,7 +430,7 @@
           }
         }
 
-        const link =
+               const link =
           document.createElement(
             "a"
           );
@@ -442,23 +442,41 @@
           fileName ||
           "document";
 
-        link.style.display =
-          "none";
+        link.style.display = "none";
+        link.setAttribute("aria-hidden", "true");
+        link.rel = "noopener";
+        link.target = "_blank";
 
-        document.body.appendChild(
-          link
-        );
+        document.body.appendChild(link);
 
-        link.click();
+        const downloadEvent = new MouseEvent("click", {
+          bubbles: true,
+          cancelable: true,
+          view: window
+        });
 
-        link.remove();
+        link.dispatchEvent(downloadEvent);
+
+        setTimeout(() => {
+          try {
+            link.click();
+          } catch {
+            // Ignore; the first click may already have started.
+          }
+        }, 0);
+
+        setTimeout(() => {
+          try {
+            link.remove();
+          } catch {
+            // Ignore.
+          }
+        }, 1000);
 
         notice(
           "Download started",
           `${fileName || "File"} is being downloaded.`
         );
-      }
-
       // --------------------------------------------------------
       // Keep Blob URL alive for browser
       // --------------------------------------------------------
