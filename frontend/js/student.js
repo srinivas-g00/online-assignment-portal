@@ -477,6 +477,7 @@
           "Download started",
           `${fileName || "File"} is being downloaded.`
         );
+      }
       // --------------------------------------------------------
       // Keep Blob URL alive for browser
       // --------------------------------------------------------
