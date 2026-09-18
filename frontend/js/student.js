@@ -17,7 +17,10 @@
     try {
       if (typeof getToken === "function") {
         const t = getToken();
-        if (t) return t;
+
+        if (t) {
+          return t;
+        }
       }
 
       return (
@@ -46,9 +49,25 @@
   // ============================================================
   // OPEN / DOWNLOAD PROTECTED FILE
   // ============================================================
+  //
+  // PDF / images / text:
+  //   Open in a new browser tab.
+  //
+  // DOC/DOCX/PPT/PPTX/XLS/XLSX/ZIP:
+  //   Download normally.
+  //
+  // IMPORTANT:
+  //   The blank tab is opened immediately from the button click.
+  //   This prevents Chrome from blocking the popup after the
+  //   asynchronous fetch() operation.
+  //
 
-  async function openProtectedFile(url, fileName = "document") {
-    const token = getAuthToken();
+  async function openProtectedFile(
+    url,
+    fileName = "document"
+  ) {
+    const token =
+      getAuthToken();
 
     if (!token) {
       notice(
@@ -56,105 +75,455 @@
         "Please log in again.",
         "err"
       );
+
       return;
     }
 
-    const separator = url.includes("?") ? "&" : "?";
-    const authedUrl = `${url}${separator}token=${encodeURIComponent(token)}`;
+    // ----------------------------------------------------------
+    // Open blank tab immediately
+    // ----------------------------------------------------------
+    //
+    // This MUST happen before await fetch().
+    //
 
-    let blobUrl = null;
+    let previewWindow =
+      null;
 
     try {
-      const response = await fetch(authedUrl, {
-        method: "GET",
-        headers: {
-          Authorization: "Bearer " + token,
-          Accept: "*/*",
-        },
-        credentials: "same-origin",
-        cache: "no-store",
-      });
+      previewWindow =
+        window.open(
+          "",
+          "_blank"
+        );
+    } catch {
+      previewWindow =
+        null;
+    }
+
+    // ----------------------------------------------------------
+    // Show temporary loading page
+    // ----------------------------------------------------------
+
+    if (previewWindow) {
+      try {
+        previewWindow.document.write(`
+          <!DOCTYPE html>
+
+          <html>
+          <head>
+
+            <meta charset="UTF-8">
+
+            <title>
+              Opening file...
+            </title>
+
+            <style>
+
+              body {
+                margin: 0;
+
+                min-height: 100vh;
+
+                display: flex;
+
+                align-items: center;
+
+                justify-content: center;
+
+                font-family:
+                  Arial,
+                  sans-serif;
+
+                background:
+                  #f8fafc;
+
+                color:
+                  #0f172a;
+              }
+
+              .loading-box {
+                text-align: center;
+
+                padding: 30px;
+              }
+
+              .loader {
+                width: 38px;
+
+                height: 38px;
+
+                border:
+                  4px solid
+                  #e2e8f0;
+
+                border-top-color:
+                  #2563eb;
+
+                border-radius:
+                  50%;
+
+                animation:
+                  spin 0.8s
+                  linear
+                  infinite;
+
+                margin:
+                  0 auto 16px;
+              }
+
+              @keyframes spin {
+
+                from {
+                  transform:
+                    rotate(0deg);
+                }
+
+                to {
+                  transform:
+                    rotate(360deg);
+                }
+
+              }
+
+            </style>
+
+          </head>
+
+          <body>
+
+            <div
+              class="loading-box"
+            >
+
+              <div
+                class="loader"
+              ></div>
+
+              <h3>
+                Opening file...
+              </h3>
+
+              <p>
+                Please wait.
+              </p>
+
+            </div>
+
+          </body>
+
+          </html>
+        `);
+
+        previewWindow.document.close();
+
+      } catch {
+        // Ignore popup document errors.
+      }
+    }
+
+    // ----------------------------------------------------------
+    // Append token to URL
+    // ----------------------------------------------------------
+
+    const separator =
+      url.includes("?")
+        ? "&"
+        : "?";
+
+    const authedUrl =
+      `${url}${separator}token=${encodeURIComponent(
+        token
+      )}`;
+
+    let blobUrl =
+      null;
+
+    try {
+
+      // --------------------------------------------------------
+      // Fetch protected file
+      // --------------------------------------------------------
+
+      const response =
+        await fetch(
+          authedUrl,
+          {
+            method:
+              "GET",
+
+            headers: {
+              Authorization:
+                "Bearer " +
+                token,
+
+              Accept:
+                "*/*",
+            },
+
+            credentials:
+              "same-origin",
+
+            cache:
+              "no-store",
+          }
+        );
+
+      // --------------------------------------------------------
+      // Check server response
+      // --------------------------------------------------------
 
       if (!response.ok) {
-        let message = `Request failed (${response.status})`;
+
+        let message =
+          `Request failed (${response.status})`;
 
         try {
-          const contentType = response.headers.get("content-type") || "";
-          if (contentType.includes("application/json")) {
-            const data = await response.json();
-            message = data.error || data.message || message;
+
+          const contentType =
+            response.headers.get(
+              "content-type"
+            ) || "";
+
+          if (
+            contentType.includes(
+              "application/json"
+            )
+          ) {
+
+            const data =
+              await response.json();
+
+            message =
+              data.error ||
+              data.message ||
+              message;
+
           } else {
-            const text = await response.text();
-            if (text) message = text;
+
+            const errorText =
+              await response.text();
+
+            if (
+              errorText
+            ) {
+              message =
+                errorText;
+            }
           }
-        } catch (_) {}
 
-        throw new Error(message);
+        } catch {
+          // Keep default message.
+        }
+
+        throw new Error(
+          message
+        );
       }
 
-      const blob = await response.blob();
+      // --------------------------------------------------------
+      // Convert response to Blob
+      // --------------------------------------------------------
 
-      if (!blob || !blob.size) {
-        throw new Error("The file returned by the server is empty.");
+      const blob =
+        await response.blob();
+
+      if (
+        !blob ||
+        !blob.size
+      ) {
+        throw new Error(
+          "The file returned by the server is empty."
+        );
       }
+
+      // --------------------------------------------------------
+      // Get MIME type
+      // --------------------------------------------------------
 
       const mimeType =
         blob.type ||
-        response.headers.get("content-type") ||
+        response.headers.get(
+          "content-type"
+        ) ||
         "application/octet-stream";
 
-      blobUrl = URL.createObjectURL(blob);
+      // --------------------------------------------------------
+      // Create Blob URL
+      // --------------------------------------------------------
 
-      const isPdfOrImage =
-        mimeType.startsWith("application/pdf") ||
-        mimeType.startsWith("image/") ||
-        mimeType.startsWith("text/");
+      blobUrl =
+        URL.createObjectURL(
+          blob
+        );
 
-      if (isPdfOrImage) {
-        const newTab = window.open(blobUrl, "_blank");
-        if (newTab) {
-          newTab.focus();
-          notice("Opened", `${fileName} opened in a new tab.`);
-          return;
+      // --------------------------------------------------------
+      // Determine previewable files
+      // --------------------------------------------------------
+
+      const canPreview =
+        mimeType ===
+          "application/pdf" ||
+
+        mimeType.startsWith(
+          "image/"
+        ) ||
+
+        mimeType.startsWith(
+          "text/"
+        );
+
+      // --------------------------------------------------------
+      // OPEN PREVIEWABLE FILE
+      // --------------------------------------------------------
+
+      if (
+        canPreview &&
+        previewWindow &&
+        !previewWindow.closed
+      ) {
+
+        previewWindow.location.href =
+          blobUrl;
+
+        try {
+          previewWindow.focus();
+        } catch {
+          // Ignore.
+        }
+
+        notice(
+          "File opened",
+          `${fileName || "File"} opened in a new tab.`
+        );
+
+      }
+
+      // --------------------------------------------------------
+      // DOWNLOAD FILE
+      // --------------------------------------------------------
+      //
+      // Used for:
+      //
+      // DOC
+      // DOCX
+      // PPT
+      // PPTX
+      // XLS
+      // XLSX
+      // ZIP
+      //
+      // Also used when popup was blocked.
+      //
+
+      else {
+
+        // Close temporary tab if it exists.
+        if (
+          previewWindow &&
+          !previewWindow.closed
+        ) {
+          try {
+            previewWindow.close();
+          } catch {
+            // Ignore.
+          }
+        }
+
+        const link =
+          document.createElement(
+            "a"
+          );
+
+        link.href =
+          blobUrl;
+
+        link.download =
+          fileName ||
+          "document";
+
+        link.style.display =
+          "none";
+
+        document.body.appendChild(
+          link
+        );
+
+        link.click();
+
+        link.remove();
+
+        notice(
+          "Download started",
+          `${fileName || "File"} is being downloaded.`
+        );
+      }
+
+      // --------------------------------------------------------
+      // Keep Blob URL alive for browser
+      // --------------------------------------------------------
+
+      const urlToRevoke =
+        blobUrl;
+
+      blobUrl =
+        null;
+
+      setTimeout(
+        () => {
+          try {
+            URL.revokeObjectURL(
+              urlToRevoke
+            );
+          } catch {
+            // Ignore.
+          }
+        },
+        60000
+      );
+
+    } catch (err) {
+
+      console.error(
+        "OPEN PROTECTED FILE ERROR:",
+        err
+      );
+
+      // --------------------------------------------------------
+      // Close loading tab if request failed
+      // --------------------------------------------------------
+
+      if (
+        previewWindow &&
+        !previewWindow.closed
+      ) {
+        try {
+          previewWindow.close();
+        } catch {
+          // Ignore.
         }
       }
 
-      const downloadLink = document.createElement("a");
-      downloadLink.href = blobUrl;
-      downloadLink.download = fileName || "document";
-      downloadLink.style.display = "none";
-      document.body.appendChild(downloadLink);
-      downloadLink.click();
-      downloadLink.remove();
+      // --------------------------------------------------------
+      // Cleanup Blob URL
+      // --------------------------------------------------------
 
-      notice("Download started", `${fileName} is being downloaded.`);
-    } catch (err) {
-      console.warn("Direct blob download failed, attempting native browser fallback:", err.message);
-
-      try {
-        const link = document.createElement("a");
-        link.href = authedUrl;
-        link.download = fileName || "document";
-        link.target = "_blank";
-        link.style.display = "none";
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-      } catch (fallbackErr) {
-        notice(
-          "Could not open file",
-          err.message || "The requested file could not be opened.",
-          "err"
-        );
-      }
-    } finally {
       if (blobUrl) {
-        setTimeout(() => {
-          try {
-            URL.revokeObjectURL(blobUrl);
-          } catch (_) {}
-        }, 120000);
+        try {
+          URL.revokeObjectURL(
+            blobUrl
+          );
+        } catch {
+          // Ignore.
+        }
       }
+
+      notice(
+        "Could not open file",
+        err.message ||
+          "The requested file could not be opened.",
+        "err"
+      );
     }
   }
 
@@ -165,9 +534,13 @@
   document
     .querySelectorAll(".tabs button")
     .forEach((btn) => {
+
       btn.onclick = () => {
+
         document
-          .querySelectorAll(".tabs button")
+          .querySelectorAll(
+            ".tabs button"
+          )
           .forEach((b) =>
             b.classList.remove(
               "active"
@@ -184,6 +557,7 @@
           "marks",
           "exams",
         ].forEach((t) => {
+
           const el =
             $(`tab-${t}`);
 
@@ -205,10 +579,13 @@
           );
         }
 
-        if ($("facultyDetailWrap")) {
-          $("facultyDetailWrap").classList.add(
-            "hidden"
-          );
+        if (
+          $("facultyDetailWrap")
+        ) {
+          $("facultyDetailWrap")
+            .classList.add(
+              "hidden"
+            );
         }
 
         if (
@@ -246,21 +623,28 @@
   // ============================================================
 
   async function init() {
+
     try {
+
       const me =
         await api(
           "/api/student/me"
         );
 
       if ($("studentName")) {
+
         $("studentName").textContent =
           me.name ||
           user.name ||
           "Student";
       }
 
-      if ($("studentUsername")) {
-        $("studentUsername").textContent =
+      if (
+        $("studentUsername")
+      ) {
+
+        $("studentUsername")
+          .textContent =
           "@" +
           (
             me.username ||
@@ -275,18 +659,24 @@
           );
       }
 
-      if ($("avatarInitial")) {
-        $("avatarInitial").textContent =
+      if (
+        $("avatarInitial")
+      ) {
+
+        $("avatarInitial")
+          .textContent =
           (
             me.name ||
             user.name ||
             "S"
-          )[0].toUpperCase();
+          )[0]
+            .toUpperCase();
       }
 
       await loadFaculties();
 
     } catch (err) {
+
       console.error(
         "Student init error:",
         err.message || err
@@ -301,19 +691,22 @@
   let searchTimer;
 
   if ($("facSearch")) {
-    $("facSearch").oninput = () => {
-      clearTimeout(
-        searchTimer
-      );
 
-      searchTimer =
-        setTimeout(
-          () => {
-            loadFaculties();
-          },
-          250
+    $("facSearch").oninput =
+      () => {
+
+        clearTimeout(
+          searchTimer
         );
-    };
+
+        searchTimer =
+          setTimeout(
+            () => {
+              loadFaculties();
+            },
+            250
+          );
+      };
   }
 
   // ============================================================
@@ -321,7 +714,9 @@
   // ============================================================
 
   async function loadFaculties() {
+
     try {
+
       const searchVal =
         $("facSearch")
           ? $("facSearch").value
@@ -338,7 +733,9 @@
       const listEl =
         $("facultyList");
 
-      if (!listEl) return;
+      if (!listEl) {
+        return;
+      }
 
       listEl.innerHTML =
         rows && rows.length
@@ -406,6 +803,7 @@
                 `
               )
               .join("")
+
           : `
               <div class="empty">
                 No faculties matched your search.
@@ -417,14 +815,18 @@
           "[data-fac]"
         )
         .forEach((card) => {
-          card.onclick = () => {
-            openFaculty(
-              card.dataset.fac
-            );
-          };
+
+          card.onclick =
+            () => {
+
+              openFaculty(
+                card.dataset.fac
+              );
+            };
         });
 
     } catch (err) {
+
       console.error(
         "loadFaculties error:",
         err.message || err
@@ -436,8 +838,12 @@
   // FACULTY DETAILS
   // ============================================================
 
-  async function openFaculty(id) {
+  async function openFaculty(
+    id
+  ) {
+
     try {
+
       const fac =
         await api(
           `/api/student/faculties/${encodeURIComponent(
@@ -445,13 +851,19 @@
           )}`
         );
 
-      if ($("facultyDetailWrap")) {
-        $("facultyDetailWrap").classList.remove(
-          "hidden"
-        );
+      if (
+        $("facultyDetailWrap")
+      ) {
+
+        $("facultyDetailWrap")
+          .classList.remove(
+            "hidden"
+          );
       }
 
-      if (!$("facultyDetail")) {
+      if (
+        !$("facultyDetail")
+      ) {
         return;
       }
 
@@ -498,7 +910,9 @@
         </div>
       `;
 
-      if (!fac.enrollStatus) {
+      if (
+        !fac.enrollStatus
+      ) {
 
         html += `
           <button
@@ -549,13 +963,19 @@
         `;
       }
 
-      $("facultyDetail").innerHTML =
+      $("facultyDetail")
+        .innerHTML =
         html;
 
-      if ($("enrollBtn")) {
+      if (
+        $("enrollBtn")
+      ) {
+
         $("enrollBtn").onclick =
           async () => {
+
             try {
+
               await api(
                 `/api/student/faculties/${encodeURIComponent(
                   id
@@ -578,6 +998,7 @@
               await loadFaculties();
 
             } catch (e) {
+
               notice(
                 "Could not register",
                 e.message ||
@@ -592,12 +1013,14 @@
         fac.enrollStatus ===
         "accepted"
       ) {
+
         await loadAssignments(
           id
         );
       }
 
     } catch (err) {
+
       notice(
         "Error loading faculty",
         err.message ||
@@ -614,7 +1037,9 @@
   async function loadAssignments(
     facultyId
   ) {
+
     try {
+
       const rows =
         await api(
           `/api/student/faculties/${encodeURIComponent(
@@ -625,7 +1050,9 @@
       const assignWrap =
         $("facultyAssignments");
 
-      if (!assignWrap) return;
+      if (!assignWrap) {
+        return;
+      }
 
       assignWrap.innerHTML =
         rows && rows.length
@@ -635,6 +1062,7 @@
                 renderAssignment
               )
               .join("")
+
           : `
               <div class="empty">
                 No assignments posted yet.
@@ -645,12 +1073,14 @@
         rows &&
         rows.length
       ) {
+
         rows.forEach(
           bindAssignment
         );
       }
 
     } catch (err) {
+
       console.error(
         "loadAssignments error:",
         err.message || err
@@ -662,7 +1092,9 @@
   // RENDER ASSIGNMENT
   // ============================================================
 
-  function renderAssignment(a) {
+  function renderAssignment(
+    a
+  ) {
 
     const timePart =
       (
@@ -715,23 +1147,10 @@
         undefined;
 
     const isPosted =
-      a.posted === true ||
       Number(
         a.posted
-      ) === 1;
-
-    const token = getAuthToken();
-    const base = getApiBase();
-
-    const questionDownloadUrl = `${base}/api/student/assignments/${encodeURIComponent(
-      a.id
-    )}/question-paper?token=${encodeURIComponent(token)}`;
-
-    const submissionDownloadUrl = hasSubmission
-      ? `${base}/api/student/submissions/${encodeURIComponent(
-          a.submission_id
-        )}/file?token=${encodeURIComponent(token)}`
-      : "#";
+      ) === 1 ||
+      a.posted === true;
 
     return `
       <div
@@ -796,19 +1215,19 @@
                 "
               >
 
-                <a
-                  href="${questionDownloadUrl}"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  download="${escapeHtml(
+                <button
+                  class="btn secondary"
+                  data-view-question="${escapeHtml(
+                    a.id
+                  )}"
+                  data-question-name="${escapeHtml(
                     a.question_original ||
                     "question-paper"
                   )}"
-                  class="btn secondary"
-                  style="text-decoration:none; display:inline-flex; align-items:center;"
+                  type="button"
                 >
                   📄 View question paper
-                </a>
+                </button>
 
               </div>
             `
@@ -834,10 +1253,6 @@
                     margin:0 0 6px 0;
                     font-size:14px;
                     color:#1e293b;
-                    display:flex;
-                    align-items:center;
-                    gap:8px;
-                    flex-wrap:wrap;
                   "
                 >
 
@@ -845,18 +1260,19 @@
                     Your Submission:
                   </strong>
 
-                  <a
-                    href="${submissionDownloadUrl}"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    download="${escapeHtml(
+                  <button
+                    class="btn secondary"
+                    data-view-own-submission="${escapeHtml(
+                      a.submission_id
+                    )}"
+                    data-own-file-name="${escapeHtml(
                       subDisplayName
                     )}"
-                    class="btn secondary"
-                    style="text-decoration:none; display:inline-flex; align-items:center;"
+                    type="button"
+                    style="margin-left:8px;"
                   >
                     📄 View / Download
-                  </a>
+                  </button>
 
                 </p>
 
@@ -920,9 +1336,27 @@
                           Result posted
                         </span>
                       `
+                      : hasMarks
+                      ? `
+                        <b
+                          style="
+                            color:#d97706;
+                          "
+                        >
+                          ${escapeHtml(
+                            a.final_marks
+                          )}/${escapeHtml(
+                            a.total_marks
+                          )}
+                        </b>
+
+                        <em>
+                          (not posted yet)
+                        </em>
+                      `
                       : `
                         <em>
-                          Not posted yet
+                          not posted yet
                         </em>
                       `
                   }
@@ -1006,7 +1440,109 @@
   // BIND ASSIGNMENT BUTTONS
   // ============================================================
 
-  function bindAssignment(a) {
+  function bindAssignment(
+    a
+  ) {
+
+    // ----------------------------------------------------------
+    // VIEW QUESTION PAPER
+    // ----------------------------------------------------------
+
+    const questionBtn =
+      findButtonByData(
+        "view-question",
+        a.id
+      );
+
+    if (
+      questionBtn
+    ) {
+
+      questionBtn.onclick =
+        async () => {
+
+          const originalText =
+            questionBtn.textContent;
+
+          questionBtn.disabled =
+            true;
+
+          questionBtn.textContent =
+            "Opening...";
+
+          try {
+
+            const url =
+              `${getApiBase()}/api/student/assignments/${encodeURIComponent(
+                a.id
+              )}/question-paper`;
+
+            await openProtectedFile(
+              url,
+              a.question_original ||
+                "question-paper"
+            );
+
+          } finally {
+
+            questionBtn.disabled =
+              false;
+
+            questionBtn.textContent =
+              originalText;
+          }
+        };
+    }
+
+    // ----------------------------------------------------------
+    // VIEW OWN SUBMISSION
+    // ----------------------------------------------------------
+
+    const ownSubmissionBtn =
+      findButtonByData(
+        "view-own-submission",
+        a.submission_id
+      );
+
+    if (
+      ownSubmissionBtn
+    ) {
+
+      ownSubmissionBtn.onclick =
+        async () => {
+
+          const originalText =
+            ownSubmissionBtn.textContent;
+
+          ownSubmissionBtn.disabled =
+            true;
+
+          ownSubmissionBtn.textContent =
+            "Opening...";
+
+          try {
+
+            const url =
+              `${getApiBase()}/api/student/submissions/${encodeURIComponent(
+                a.submission_id
+              )}/file`;
+
+            await openProtectedFile(
+              url,
+              a.file_original ||
+                "student-submission"
+            );
+
+          } finally {
+
+            ownSubmissionBtn.disabled =
+              false;
+
+            ownSubmissionBtn.textContent =
+              originalText;
+          }
+        };
+    }
 
     // ----------------------------------------------------------
     // SUBMIT ASSIGNMENT
@@ -1018,7 +1554,9 @@
         a.id
       );
 
-    if (submitBtn) {
+    if (
+      submitBtn
+    ) {
 
       submitBtn.onclick =
         async () => {
@@ -1034,6 +1572,7 @@
               : null;
 
           if (!file) {
+
             return notice(
               "No file chosen",
               "Select a file to upload.",
@@ -1047,6 +1586,7 @@
               1024 *
               1024
           ) {
+
             return notice(
               "File too large",
               "Maximum allowed size is 15MB.",
@@ -1123,7 +1663,10 @@
         a.id
       );
 
-    if (modifyBtn) {
+    if (
+      modifyBtn
+    ) {
+
       modifyBtn.onclick =
         () =>
           requestModifyOtp(
@@ -1140,6 +1683,7 @@
     attribute,
     value
   ) {
+
     const buttons =
       document.querySelectorAll(
         `[data-${attribute}]`
@@ -1149,13 +1693,16 @@
       const button
       of buttons
     ) {
+
       if (
         String(
           button.dataset[
             attribute
           ]
         ) ===
-        String(value)
+        String(
+          value
+        )
       ) {
         return button;
       }
@@ -1171,6 +1718,7 @@
   async function requestModifyOtp(
     a
   ) {
+
     try {
 
       await api(
@@ -1267,7 +1815,9 @@
         "modConfirm"
       );
 
-    if (!confirmBtn) {
+    if (
+      !confirmBtn
+    ) {
       return;
     }
 
@@ -1289,7 +1839,9 @@
             "modErr"
           );
 
-        if (!errBox) {
+        if (
+          !errBox
+        ) {
           return;
         }
 
@@ -1298,6 +1850,7 @@
         );
 
         if (!file) {
+
           errBox.textContent =
             "Choose a replacement file.";
 
@@ -1314,6 +1867,7 @@
             1024 *
             1024
         ) {
+
           errBox.textContent =
             "Maximum allowed file size is 15MB.";
 
@@ -1335,6 +1889,7 @@
             : "";
 
         if (!emailOtp) {
+
           errBox.textContent =
             "Please enter the OTP code.";
 
@@ -1350,6 +1905,7 @@
             emailOtp
           )
         ) {
+
           errBox.textContent =
             "OTP must contain exactly 6 digits.";
 
@@ -1432,6 +1988,7 @@
   // ============================================================
 
   async function loadCourses() {
+
     try {
 
       const rows =
@@ -1442,7 +1999,9 @@
       const listEl =
         $("coursesList");
 
-      if (!listEl) {
+      if (
+        !listEl
+      ) {
         return;
       }
 
@@ -1480,6 +2039,7 @@
                 `
               )
               .join("")
+
           : `
               <div class="empty">
                 You haven't registered under
@@ -1501,6 +2061,7 @@
   // ============================================================
 
   async function loadMarks() {
+
     try {
 
       const rows =
@@ -1511,7 +2072,9 @@
       const bodyEl =
         $("marksBody");
 
-      if (!bodyEl) {
+      if (
+        !bodyEl
+      ) {
         return;
       }
 
@@ -1546,7 +2109,9 @@
                         r.posted
                           ? `
                             <span class="marks">
-                              ${escapeHtml(                                 r.final_marks                               )}/${escapeHtml(
+                              ${escapeHtml(
+                                r.final_marks
+                              )}/${escapeHtml(
                                 r.total_marks
                               )}
                             </span>
@@ -1562,6 +2127,7 @@
                 `
               )
               .join("")
+
           : `
               <tr>
 
@@ -1589,6 +2155,7 @@
   // ============================================================
 
   async function loadExams() {
+
     try {
 
       const rows =
@@ -1599,7 +2166,9 @@
       const listEl =
         $("examsList");
 
-      if (!listEl) {
+      if (
+        !listEl
+      ) {
         return;
       }
 
@@ -1847,6 +2416,7 @@
                 }
               )
               .join("")
+
           : `
               <div class="empty">
                 No exams available yet.
@@ -1861,18 +2431,20 @@
         .querySelectorAll(
           "[data-exam]"
         )
-        .forEach((button) => {
+        .forEach(
+          (button) => {
 
-          button.onclick =
-            () => {
+            button.onclick =
+              () => {
 
-              window.location.href =
-                `exam-take.html?examId=${encodeURIComponent(
-                  button.dataset
-                    .exam
-                )}`;
-            };
-        });
+                window.location.href =
+                  `exam-take.html?examId=${encodeURIComponent(
+                    button.dataset
+                      .exam
+                  )}`;
+              };
+          }
+        );
 
     } catch (err) {
 
@@ -1884,7 +2456,9 @@
       const listEl =
         $("examsList");
 
-      if (listEl) {
+      if (
+        listEl
+      ) {
 
         listEl.innerHTML = `
           <div
