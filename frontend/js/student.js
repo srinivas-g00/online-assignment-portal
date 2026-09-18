@@ -49,22 +49,6 @@
   // ============================================================
   // OPEN / DOWNLOAD PROTECTED FILE
   // ============================================================
-  //
-  // The Student backend accepts the authentication token through
-  // the query parameter:
-  //
-  // ?token=YOUR_TOKEN
-  //
-  // We open the protected URL directly, just like the working
-  // Faculty side.
-  //
-  // PDF / images / text:
-  //   Browser opens/preview directly.
-  //
-  // DOC/DOCX/PPT/PPTX/XLS/XLSX/ZIP:
-  //   Browser downloads according to server headers.
-  //
-  // ============================================================
 
   function openProtectedFile(
     url,
@@ -83,42 +67,25 @@
 
     try {
       const separator =
-        url.includes("?")
-          ? "&"
-          : "?";
+        url.includes("?") ? "&" : "?";
 
       const authedUrl =
         `${url}${separator}token=${encodeURIComponent(
           token
         )}`;
 
-      // --------------------------------------------------------
-      // Direct browser navigation
-      // --------------------------------------------------------
-      //
-      // Do NOT use fetch/blob here.
-      // The backend already sends the correct
-      // Content-Type and Content-Disposition headers.
-      //
-
       const link =
         document.createElement("a");
 
       link.href = authedUrl;
       link.target = "_blank";
-      link.rel =
-        "noopener noreferrer";
+      link.rel = "noopener noreferrer";
 
-      document.body.appendChild(
-        link
-      );
-
+      document.body.appendChild(link);
       link.click();
-
       link.remove();
 
     } catch (err) {
-
       console.error(
         "OPEN PROTECTED FILE ERROR:",
         err
@@ -144,18 +111,12 @@
       btn.onclick = () => {
 
         document
-          .querySelectorAll(
-            ".tabs button"
-          )
+          .querySelectorAll(".tabs button")
           .forEach((b) =>
-            b.classList.remove(
-              "active"
-            )
+            b.classList.remove("active")
           );
 
-        btn.classList.add(
-          "active"
-        );
+        btn.classList.add("active");
 
         [
           "faculties",
@@ -168,57 +129,35 @@
             $(`tab-${t}`);
 
           if (el) {
-            el.classList.add(
-              "hidden"
-            );
+            el.classList.add("hidden");
           }
         });
 
         const activeTabEl =
-          $(
-            `tab-${btn.dataset.tab}`
-          );
+          $(`tab-${btn.dataset.tab}`);
 
         if (activeTabEl) {
-          activeTabEl.classList.remove(
-            "hidden"
-          );
+          activeTabEl.classList.remove("hidden");
         }
 
-        if (
+        if ($("facultyDetailWrap")) {
           $("facultyDetailWrap")
-        ) {
-          $("facultyDetailWrap")
-            .classList.add(
-              "hidden"
-            );
+            .classList.add("hidden");
         }
 
-        if (
-          btn.dataset.tab ===
-          "faculties"
-        ) {
+        if (btn.dataset.tab === "faculties") {
           loadFaculties();
         }
 
-        if (
-          btn.dataset.tab ===
-          "courses"
-        ) {
+        if (btn.dataset.tab === "courses") {
           loadCourses();
         }
 
-        if (
-          btn.dataset.tab ===
-          "marks"
-        ) {
+        if (btn.dataset.tab === "marks") {
           loadMarks();
         }
 
-        if (
-          btn.dataset.tab ===
-          "exams"
-        ) {
+        if (btn.dataset.tab === "exams") {
           loadExams();
         }
       };
@@ -238,19 +177,14 @@
         );
 
       if ($("studentName")) {
-
         $("studentName").textContent =
           me.name ||
           user.name ||
           "Student";
       }
 
-      if (
-        $("studentUsername")
-      ) {
-
-        $("studentUsername")
-          .textContent =
+      if ($("studentUsername")) {
+        $("studentUsername").textContent =
           "@" +
           (
             me.username ||
@@ -259,24 +193,18 @@
           ) +
           (
             me.branch
-              ? " · " +
-                me.branch
+              ? " · " + me.branch
               : ""
           );
       }
 
-      if (
-        $("avatarInitial")
-      ) {
-
-        $("avatarInitial")
-          .textContent =
+      if ($("avatarInitial")) {
+        $("avatarInitial").textContent =
           (
             me.name ||
             user.name ||
             "S"
-          )[0]
-            .toUpperCase();
+          )[0].toUpperCase();
       }
 
       await loadFaculties();
@@ -298,21 +226,18 @@
 
   if ($("facSearch")) {
 
-    $("facSearch").oninput =
-      () => {
+    $("facSearch").oninput = () => {
 
-        clearTimeout(
-          searchTimer
+      clearTimeout(searchTimer);
+
+      searchTimer =
+        setTimeout(
+          () => {
+            loadFaculties();
+          },
+          250
         );
-
-        searchTimer =
-          setTimeout(
-            () => {
-              loadFaculties();
-            },
-            250
-          );
-      };
+    };
   }
 
   // ============================================================
@@ -331,9 +256,7 @@
       const rows =
         await api(
           "/api/student/faculties?search=" +
-            encodeURIComponent(
-              searchVal
-            )
+            encodeURIComponent(searchVal)
         );
 
       const listEl =
@@ -350,16 +273,12 @@
                 (f) => `
                   <div
                     class="mini-card"
-                    data-fac="${escapeHtml(
-                      f.id
-                    )}"
+                    data-fac="${escapeHtml(f.id)}"
                     style="cursor:pointer"
                   >
 
                     <h4>
-                      ${escapeHtml(
-                        f.name
-                      )}
+                      ${escapeHtml(f.name)}
                     </h4>
 
                     <p>
@@ -371,16 +290,13 @@
 
                     <p>
                       ${escapeHtml(
-                        f.branch ||
-                          ""
+                        f.branch || ""
                       )}
 
                       ${
                         f.slot
                           ? " · " +
-                            escapeHtml(
-                              f.slot
-                            )
+                            escapeHtml(f.slot)
                           : ""
                       }
                     </p>
@@ -417,18 +333,15 @@
             `;
 
       document
-        .querySelectorAll(
-          "[data-fac]"
-        )
+        .querySelectorAll("[data-fac]")
         .forEach((card) => {
 
-          card.onclick =
-            () => {
+          card.onclick = () => {
 
-              openFaculty(
-                card.dataset.fac
-              );
-            };
+            openFaculty(
+              card.dataset.fac
+            );
+          };
         });
 
     } catch (err) {
@@ -444,9 +357,7 @@
   // FACULTY DETAILS
   // ============================================================
 
-  async function openFaculty(
-    id
-  ) {
+  async function openFaculty(id) {
 
     try {
 
@@ -457,27 +368,18 @@
           )}`
         );
 
-      if (
+      if ($("facultyDetailWrap")) {
         $("facultyDetailWrap")
-      ) {
-
-        $("facultyDetailWrap")
-          .classList.remove(
-            "hidden"
-          );
+          .classList.remove("hidden");
       }
 
-      if (
-        !$("facultyDetail")
-      ) {
+      if (!$("facultyDetail")) {
         return;
       }
 
       let html = `
         <h2>
-          ${escapeHtml(
-            fac.name
-          )}
+          ${escapeHtml(fac.name)}
         </h2>
 
         <div
@@ -492,33 +394,28 @@
           <span class="pill">
             Subject:
             ${escapeHtml(
-              fac.subject ||
-                "—"
+              fac.subject || "—"
             )}
           </span>
 
           <span class="pill">
             Branch:
             ${escapeHtml(
-              fac.branch ||
-                "—"
+              fac.branch || "—"
             )}
           </span>
 
           <span class="pill">
             Slot:
             ${escapeHtml(
-              fac.slot ||
-                "—"
+              fac.slot || "—"
             )}
           </span>
 
         </div>
       `;
 
-      if (
-        !fac.enrollStatus
-      ) {
+      if (!fac.enrollStatus) {
 
         html += `
           <button
@@ -532,8 +429,7 @@
         `;
 
       } else if (
-        fac.enrollStatus ===
-        "pending"
+        fac.enrollStatus === "pending"
       ) {
 
         html += `
@@ -546,8 +442,7 @@
         `;
 
       } else if (
-        fac.enrollStatus ===
-        "rejected"
+        fac.enrollStatus === "rejected"
       ) {
 
         html += `
@@ -569,13 +464,9 @@
         `;
       }
 
-      $("facultyDetail")
-        .innerHTML =
-        html;
+      $("facultyDetail").innerHTML = html;
 
-      if (
-        $("enrollBtn")
-      ) {
+      if ($("enrollBtn")) {
 
         $("enrollBtn").onclick =
           async () => {
@@ -587,8 +478,7 @@
                   id
                 )}/enroll`,
                 {
-                  method:
-                    "POST",
+                  method: "POST",
                 }
               );
 
@@ -597,10 +487,7 @@
                 "Your registration request was sent to the faculty for approval."
               );
 
-              await openFaculty(
-                id
-              );
-
+              await openFaculty(id);
               await loadFaculties();
 
             } catch (e) {
@@ -616,13 +503,10 @@
       }
 
       if (
-        fac.enrollStatus ===
-        "accepted"
+        fac.enrollStatus === "accepted"
       ) {
 
-        await loadAssignments(
-          id
-        );
+        await loadAssignments(id);
       }
 
     } catch (err) {
@@ -664,9 +548,7 @@
         rows && rows.length
           ? `<h3>Assignments</h3>` +
             rows
-              .map(
-                renderAssignment
-              )
+              .map(renderAssignment)
               .join("")
 
           : `
@@ -675,14 +557,8 @@
               </div>
             `;
 
-      if (
-        rows &&
-        rows.length
-      ) {
-
-        rows.forEach(
-          bindAssignment
-        );
+      if (rows && rows.length) {
+        rows.forEach(bindAssignment);
       }
 
     } catch (err) {
@@ -698,23 +574,17 @@
   // RENDER ASSIGNMENT
   // ============================================================
 
-  function renderAssignment(
-    a
-  ) {
+  function renderAssignment(a) {
 
     const timePart =
       (
         a.due_time ||
         "23:59:59"
-      ).slice(
-        0,
-        8
-      );
+      ).slice(0, 8);
 
     const datePart =
       String(
-        a.due_date ||
-          ""
+        a.due_date || ""
       )
         .split("T")[0]
         .split(" ")[0];
@@ -725,15 +595,10 @@
       ).getTime();
 
     const closed =
-      Boolean(
-        a.closed
-      ) ||
+      Boolean(a.closed) ||
       (
-        !Number.isNaN(
-          dueMs
-        ) &&
-        dueMs <
-          Date.now()
+        !Number.isNaN(dueMs) &&
+        dueMs < Date.now()
       );
 
     const subDisplayName =
@@ -741,21 +606,15 @@
       "Uploaded Document";
 
     const hasSubmission =
-      a.submission_id !==
-        null &&
-      a.submission_id !==
-        undefined;
+      a.submission_id !== null &&
+      a.submission_id !== undefined;
 
     const hasMarks =
-      a.final_marks !==
-        null &&
-      a.final_marks !==
-        undefined;
+      a.final_marks !== null &&
+      a.final_marks !== undefined;
 
     const isPosted =
-      Number(
-        a.posted
-      ) === 1 ||
+      Number(a.posted) === 1 ||
       a.posted === true;
 
     return `
@@ -765,9 +624,7 @@
       >
 
         <h4>
-          ${escapeHtml(
-            a.title
-          )}
+          ${escapeHtml(a.title)}
         </h4>
 
         <p>
@@ -781,19 +638,13 @@
 
           <span class="pill">
             Total:
-            ${escapeHtml(
-              a.total_marks
-            )}
+            ${escapeHtml(a.total_marks)}
           </span>
 
           <span class="pill deadline">
             Due:
-            ${escapeHtml(
-              datePart
-            )}
-            ${escapeHtml(
-              timePart
-            )}
+            ${escapeHtml(datePart)}
+            ${escapeHtml(timePart)}
           </span>
 
         </p>
@@ -815,11 +666,7 @@
         ${
           a.question_file
             ? `
-              <div
-                style="
-                  margin:8px 0;
-                "
-              >
+              <div style="margin:8px 0;">
 
                 <button
                   class="btn secondary"
@@ -832,7 +679,7 @@
                   )}"
                   type="button"
                 >
-                  📄 View question paper
+                  📄 View / Download Question Paper
                 </button>
 
               </div>
@@ -890,21 +737,15 @@
                   "
                 >
                   File:
-                  ${escapeHtml(
-                    subDisplayName
-                  )}
+                  ${escapeHtml(subDisplayName)}
                 </p>
 
                 <p
                   class="note"
-                  style="
-                    margin:0 0 6px 0;
-                  "
+                  style="margin:0 0 6px 0;"
                 >
                   Submitted on:
-                  ${fmtDateTime(
-                    a.submitted_at
-                  )}
+                  ${fmtDateTime(a.submitted_at)}
                 </p>
 
                 <p
@@ -918,13 +759,10 @@
                   Marks:
 
                   ${
-                    hasMarks &&
-                    isPosted
+                    hasMarks && isPosted
                       ? `
                         <b
-                          style="
-                            color:#16a34a;
-                          "
+                          style="color:#16a34a;"
                         >
                           ${escapeHtml(
                             a.final_marks
@@ -945,9 +783,7 @@
                       : hasMarks
                       ? `
                         <b
-                          style="
-                            color:#d97706;
-                          "
+                          style="color:#d97706;"
                         >
                           ${escapeHtml(
                             a.final_marks
@@ -976,9 +812,7 @@
                   ? `
                     <button
                       class="btn secondary"
-                      style="
-                        margin-top:10px;
-                      "
+                      style="margin-top:10px;"
                       data-modify="${escapeHtml(
                         a.id
                       )}"
@@ -998,26 +832,18 @@
             ? `
               <div
                 class="filebox"
-                style="
-                  margin-top:10px;
-                "
+                style="margin-top:10px;"
               >
 
                 <input
                   type="file"
-                  id="file-${escapeHtml(
-                    a.id
-                  )}"
+                  id="file-${escapeHtml(a.id)}"
                 >
 
                 <button
                   class="btn"
-                  style="
-                    margin-top:8px;
-                  "
-                  data-submit="${escapeHtml(
-                    a.id
-                  )}"
+                  style="margin-top:8px;"
+                  data-submit="${escapeHtml(a.id)}"
                   type="button"
                 >
                   Submit answer
@@ -1028,9 +854,7 @@
             : `
               <p
                 class="note"
-                style="
-                  margin-top:8px;
-                "
+                style="margin-top:8px;"
               >
                 No submission was made before
                 the deadline.
@@ -1047,149 +871,202 @@
   // ============================================================
 
   function bindAssignment(a) {
+
     // ----------------------------------------------------------
-    // 1. VIEW / DOWNLOAD QUESTION PAPER
+    // VIEW / DOWNLOAD QUESTION PAPER
     // ----------------------------------------------------------
-    const questionBtn = findButtonByData("view-question", a.id);
+
+    const questionBtn =
+      findButtonByData(
+        "view-question",
+        a.id
+      );
+
     if (questionBtn) {
-      questionBtn.onclick = async (e) => {
-        e.preventDefault();
-        const originalText = questionBtn.textContent;
-        questionBtn.disabled = true;
-        questionBtn.textContent = "Downloading...";
 
-        try {
-          const token = getAuthToken();
-          const url = `${getApiBase()}/api/student/assignments/${encodeURIComponent(a.id)}/question-paper?token=${encodeURIComponent(token)}`;
-          
-          const res = await fetch(url, {
-            headers: { Authorization: "Bearer " + token }
-          });
+      questionBtn.onclick = () => {
 
-          if (!res.ok) throw new Error(`Download failed with status ${res.status}`);
+        const base =
+          getApiBase();
 
-          const blob = await res.blob();
-          const downloadUrl = window.URL.createObjectURL(blob);
-          const aTag = document.createElement("a");
-          aTag.href = downloadUrl;
-          aTag.download = a.question_original || `assignment-${a.id}-question.pdf`;
-          document.body.appendChild(aTag);
-          aTag.click();
-          aTag.remove();
-          window.URL.revokeObjectURL(downloadUrl);
-        } catch (err) {
-          console.error("Question download error:", err);
-          notice("Error", "Could not download question paper: " + err.message, "err");
-        } finally {
-          questionBtn.disabled = false;
-          questionBtn.textContent = originalText;
-        }
+        const url =
+          `${base}/api/student/assignments/${encodeURIComponent(
+            a.id
+          )}/question-paper`;
+
+        openProtectedFile(
+          url,
+          a.question_original ||
+            "question-paper"
+        );
       };
     }
 
     // ----------------------------------------------------------
-    // 2. VIEW / DOWNLOAD OWN SUBMISSION
+    // VIEW / DOWNLOAD OWN SUBMISSION
     // ----------------------------------------------------------
-    const ownSubmissionBtn = findButtonByData("view-own-submission", a.submission_id);
-    if (ownSubmissionBtn) {
-      ownSubmissionBtn.onclick = async (e) => {
-        e.preventDefault();
-        const originalText = ownSubmissionBtn.textContent;
-        ownSubmissionBtn.disabled = true;
-        ownSubmissionBtn.textContent = "Downloading...";
 
-        try {
-          const token = getAuthToken();
-          const url = `${getApiBase()}/api/student/submissions/${encodeURIComponent(a.submission_id)}/file?token=${encodeURIComponent(token)}`;
-          
-          const res = await fetch(url, {
-            headers: { Authorization: "Bearer " + token }
-          });
+    const ownSubmissionBtn =
+      findButtonByData(
+        "view-own-submission",
+        a.submission_id
+      );
 
-          if (!res.ok) throw new Error(`Download failed with status ${res.status}`);
+    if (
+      ownSubmissionBtn &&
+      a.submission_id !== null &&
+      a.submission_id !== undefined
+    ) {
 
-          const blob = await res.blob();
-          const downloadUrl = window.URL.createObjectURL(blob);
-          const aTag = document.createElement("a");
-          aTag.href = downloadUrl;
-          aTag.download = a.file_original || `submission-${a.submission_id}.pdf`;
-          document.body.appendChild(aTag);
-          aTag.click();
-          aTag.remove();
-          window.URL.revokeObjectURL(downloadUrl);
-        } catch (err) {
-          console.error("Submission download error:", err);
-          notice("Error", "Could not download submission: " + err.message, "err");
-        } finally {
-          ownSubmissionBtn.disabled = false;
-          ownSubmissionBtn.textContent = originalText;
-        }
+      ownSubmissionBtn.onclick = () => {
+
+        const base =
+          getApiBase();
+
+        const url =
+          `${base}/api/student/submissions/${encodeURIComponent(
+            a.submission_id
+          )}/file`;
+
+        openProtectedFile(
+          url,
+          a.file_original ||
+            "submission"
+        );
       };
     }
 
     // ----------------------------------------------------------
-    // 3. SUBMIT ASSIGNMENT
+    // SUBMIT ANSWER
     // ----------------------------------------------------------
-    const submitBtn = findButtonByData("submit", a.id);
+
+    const submitBtn =
+      findButtonByData(
+        "submit",
+        a.id
+      );
+
     if (submitBtn) {
-      submitBtn.onclick = async () => {
-        const fileInput = document.getElementById(`file-${a.id}`);
-        const file = fileInput ? fileInput.files[0] : null;
 
-        if (!file) {
-          return notice("No file chosen", "Select a file to upload.", "err");
-        }
+      submitBtn.onclick =
+        async () => {
 
-        if (file.size > 15 * 1024 * 1024) {
-          return notice("File too large", "Maximum allowed size is 15MB.", "err");
-        }
+          const fileInput =
+            document.getElementById(
+              `file-${a.id}`
+            );
 
-        const fd = new FormData();
-        fd.append("file", file);
+          const file =
+            fileInput &&
+            fileInput.files
+              ? fileInput.files[0]
+              : null;
 
-        try {
-          submitBtn.disabled = true;
-          submitBtn.textContent = "Uploading...";
+          if (!file) {
 
-          await api(
-            `/api/student/assignments/${encodeURIComponent(a.id)}/submit`,
-            { method: "POST", isForm: true, body: fd }
+            notice(
+              "Choose a file",
+              "Please select your answer file before submitting.",
+              "err"
+            );
+
+            return;
+          }
+
+          if (
+            file.size >
+            15 * 1024 * 1024
+          ) {
+
+            notice(
+              "File too large",
+              "Maximum allowed file size is 15MB.",
+              "err"
+            );
+
+            return;
+          }
+
+          const fd =
+            new FormData();
+
+          fd.append(
+            "file",
+            file
           );
 
-          notice("Submitted", "Your answer was submitted successfully.");
-          await openFaculty(a.faculty_id);
-        } catch (e) {
-          notice("Submission failed", e.message || "Could not submit the assignment.", "err");
-          submitBtn.disabled = false;
-          submitBtn.textContent = "Submit answer";
-        }
-      };
+          try {
+
+            submitBtn.disabled = true;
+
+            submitBtn.textContent =
+              "Submitting...";
+
+            await api(
+              `/api/student/assignments/${encodeURIComponent(
+                a.id
+              )}/submit`,
+              {
+                method: "POST",
+                isForm: true,
+                body: fd
+              }
+            );
+
+            notice(
+              "Submitted successfully",
+              "Your answer has been submitted."
+            );
+
+            await openFaculty(
+              a.faculty_id
+            );
+
+          } catch (e) {
+
+            console.error(
+              "Submit assignment error:",
+              e
+            );
+
+            notice(
+              "Submission failed",
+              e.message ||
+                "Could not submit your answer.",
+              "err"
+            );
+
+            submitBtn.disabled =
+              false;
+
+            submitBtn.textContent =
+              "Submit answer";
+          }
+        };
     }
 
     // ----------------------------------------------------------
-    // 4. MODIFY SUBMISSION
+    // MODIFY SUBMISSION
     // ----------------------------------------------------------
-    const modifyBtn = findButtonByData("modify", a.id);
+
+    const modifyBtn =
+      findButtonByData(
+        "modify",
+        a.id
+      );
+
     if (modifyBtn) {
-      modifyBtn.onclick = () => requestModifyOtp(a);
+
+      modifyBtn.onclick =
+        async () => {
+
+          await requestModifyOtp(a);
+        };
     }
   }
 
   // ============================================================
   // SAFE DATA ATTRIBUTE BUTTON SEARCH
-  // ============================================================
-  //
-  // IMPORTANT:
-  // Use getAttribute() instead of button.dataset[attribute].
-  //
-  // Example:
-  //
-  // data-view-question="10"
-  //
-  // is safely read using:
-  //
-  // button.getAttribute("data-view-question")
-  //
   // ============================================================
 
   function findButtonByData(
@@ -1203,8 +1080,7 @@
       );
 
     for (
-      const button
-      of buttons
+      const button of buttons
     ) {
 
       const actualValue =
@@ -1213,12 +1089,8 @@
         );
 
       if (
-        String(
-          actualValue
-        ) ===
-        String(
-          value
-        )
+        String(actualValue) ===
+        String(value)
       ) {
 
         return button;
@@ -1232,9 +1104,7 @@
   // REQUEST MODIFY OTP
   // ============================================================
 
-  async function requestModifyOtp(
-    a
-  ) {
+  async function requestModifyOtp(a) {
 
     try {
 
@@ -1243,8 +1113,7 @@
           a.submission_id
         )}/request-modify-otp`,
         {
-          method:
-            "POST",
+          method: "POST",
         }
       );
 
@@ -1332,9 +1201,7 @@
         "modConfirm"
       );
 
-    if (
-      !confirmBtn
-    ) {
+    if (!confirmBtn) {
       return;
     }
 
@@ -1347,7 +1214,8 @@
           );
 
         const file =
-          fileInput
+          fileInput &&
+          fileInput.files
             ? fileInput.files[0]
             : null;
 
@@ -1356,15 +1224,11 @@
             "modErr"
           );
 
-        if (
-          !errBox
-        ) {
+        if (!errBox) {
           return;
         }
 
-        errBox.classList.add(
-          "hidden"
-        );
+        errBox.classList.add("hidden");
 
         if (!file) {
 
@@ -1380,9 +1244,7 @@
 
         if (
           file.size >
-          15 *
-            1024 *
-            1024
+          15 * 1024 * 1024
         ) {
 
           errBox.textContent =
@@ -1418,9 +1280,7 @@
         }
 
         if (
-          !/^\d{6}$/.test(
-            emailOtp
-          )
+          !/^\d{6}$/.test(emailOtp)
         ) {
 
           errBox.textContent =
@@ -1448,8 +1308,7 @@
 
         try {
 
-          confirmBtn.disabled =
-            true;
+          confirmBtn.disabled = true;
 
           confirmBtn.textContent =
             "Replacing...";
@@ -1459,14 +1318,9 @@
               a.submission_id
             )}/modify`,
             {
-              method:
-                "POST",
-
-              isForm:
-                true,
-
-              body:
-                fd,
+              method: "POST",
+              isForm: true,
+              body: fd,
             }
           );
 
@@ -1516,9 +1370,7 @@
       const listEl =
         $("coursesList");
 
-      if (
-        !listEl
-      ) {
+      if (!listEl) {
         return;
       }
 
@@ -1530,15 +1382,12 @@
                   <div class="mini-card">
 
                     <h4>
-                      ${escapeHtml(
-                        c.name
-                      )}
+                      ${escapeHtml(c.name)}
                     </h4>
 
                     <p>
                       ${escapeHtml(
-                        c.subject ||
-                          ""
+                        c.subject || ""
                       )}
                     </p>
 
@@ -1547,9 +1396,7 @@
                         c.status
                       )}"
                     >
-                      ${escapeHtml(
-                        c.status
-                      )}
+                      ${escapeHtml(c.status)}
                     </span>
 
                   </div>
@@ -1589,9 +1436,7 @@
       const bodyEl =
         $("marksBody");
 
-      if (
-        !bodyEl
-      ) {
+      if (!bodyEl) {
         return;
       }
 
@@ -1603,9 +1448,7 @@
                   <tr>
 
                     <td>
-                      ${escapeHtml(
-                        r.title
-                      )}
+                      ${escapeHtml(r.title)}
                     </td>
 
                     <td>
@@ -1683,9 +1526,7 @@
       const listEl =
         $("examsList");
 
-      if (
-        !listEl
-      ) {
+      if (!listEl) {
         return;
       }
 
@@ -1701,15 +1542,10 @@
 
                   const examDate =
                     String(
-                      ex.exam_date ||
-                        ""
+                      ex.exam_date || ""
                     )
-                      .split(
-                        "T"
-                      )[0]
-                      .split(
-                        " "
-                      )[0];
+                      .split("T")[0]
+                      .split(" ")[0];
 
                   const start =
                     new Date(
@@ -1724,8 +1560,7 @@
                   const end =
                     new Date(
                       start.getTime() +
-                        durationMin *
-                          60000
+                        durationMin * 60000
                     );
 
                   const now =
@@ -1737,33 +1572,21 @@
                     ) || 0;
 
                   const hasScore =
-                    ex.score !==
-                      null &&
-                    ex.score !==
-                      undefined &&
-                    ex.score !==
-                      "" &&
+                    ex.score !== null &&
+                    ex.score !== undefined &&
+                    ex.score !== "" &&
                     !Number.isNaN(
-                      Number(
-                        ex.score
-                      )
+                      Number(ex.score)
                     );
 
-                  let status =
-                    "";
+                  let status = "";
 
-                  if (
-                    ex.submitted_at
-                  ) {
+                  if (ex.submitted_at) {
 
-                    if (
-                      hasScore
-                    ) {
+                    if (hasScore) {
 
                       const score =
-                        Number(
-                          ex.score
-                        );
+                        Number(ex.score);
 
                       status = `
                         <div
@@ -1799,12 +1622,8 @@
                           </div>
 
                           ${
-                            Number(
-                              ex.posted
-                            ) ===
-                              1 ||
-                            ex.posted ===
-                              true
+                            Number(ex.posted) === 1 ||
+                            ex.posted === true
                               ? `
                                 <div
                                   style="
@@ -1851,9 +1670,7 @@
                       `;
                     }
 
-                  } else if (
-                    now < start
-                  ) {
+                  } else if (now < start) {
 
                     status = `
                       <span class="note">
@@ -1862,9 +1679,7 @@
                       </span>
                     `;
 
-                  } else if (
-                    now > end
-                  ) {
+                  } else if (now > end) {
 
                     status = `
                       <span class="note">
@@ -1901,27 +1716,17 @@
 
                       <p>
                         ${escapeHtml(
-                          ex.faculty_name ||
-                            ""
+                          ex.faculty_name || ""
                         )}
                       </p>
 
                       <p>
-                        ${escapeHtml(
-                          examDate
-                        )}
-
-                        ${escapeHtml(
-                          startTime
-                        )}
-
+                        ${escapeHtml(examDate)}
+                        ${escapeHtml(startTime)}
                         ·
-
                         ${durationMin}
                         min
-
                         ·
-
                         ${totalMarks}
                         marks
                       </p>
@@ -1945,23 +1750,17 @@
       // ========================================================
 
       document
-        .querySelectorAll(
-          "[data-exam]"
-        )
-        .forEach(
-          (button) => {
+        .querySelectorAll("[data-exam]")
+        .forEach((button) => {
 
-            button.onclick =
-              () => {
+          button.onclick = () => {
 
-                window.location.href =
-                  `exam-take.html?examId=${encodeURIComponent(
-                    button.dataset
-                      .exam
-                  )}`;
-              };
-          }
-        );
+            window.location.href =
+              `exam-take.html?examId=${encodeURIComponent(
+                button.dataset.exam
+              )}`;
+          };
+        });
 
     } catch (err) {
 
@@ -1973,9 +1772,7 @@
       const listEl =
         $("examsList");
 
-      if (
-        listEl
-      ) {
+      if (listEl) {
 
         listEl.innerHTML = `
           <div
