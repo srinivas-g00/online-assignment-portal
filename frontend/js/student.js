@@ -50,486 +50,72 @@
   // OPEN / DOWNLOAD PROTECTED FILE
   // ============================================================
   //
+  // The Student backend accepts the authentication token through
+  // the query parameter:
+  //
+  // ?token=YOUR_TOKEN
+  //
+  // We open the protected URL directly, just like the working
+  // Faculty side.
+  //
   // PDF / images / text:
-  //   Open in a new browser tab.
+  //   Browser opens/preview directly.
   //
   // DOC/DOCX/PPT/PPTX/XLS/XLSX/ZIP:
-  //   Download normally.
+  //   Browser downloads according to server headers.
   //
-  // IMPORTANT:
-  //   The blank tab is opened immediately from the button click.
-  //   This prevents Chrome from blocking the popup after the
-  //   asynchronous fetch() operation.
-  //
-
-  async function openProtectedFile(
-  url,
-  fileName = "document"
-) {
-  const token = getAuthToken();
-
-  if (!token) {
-    notice(
-      "Session expired",
-      "Please log in again.",
-      "err"
-    );
-    return;
-  }
-
-  try {
-    const separator = url.includes("?")
-      ? "&"
-      : "?";
-
-    const authedUrl =
-      `${url}${separator}token=${encodeURIComponent(token)}`;
-
-    const link = document.createElement("a");
-
-    link.href = authedUrl;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-
-  } catch (err) {
-    console.error(
-      "OPEN PROTECTED FILE ERROR:",
-      err
-    );
-
-    notice(
-      "Could not open file",
-      err.message ||
-        "The requested file could not be opened.",
-      "err"
-    );
-  }
-}
-    // ----------------------------------------------------------
-    // Open blank tab immediately
-    // ----------------------------------------------------------
-    //
-    // This MUST happen before await fetch().
-    //
-
-    let previewWindow =
-      null;
-
-    try {
-      previewWindow =
-        window.open(
-          "",
-          "_blank"
-        );
-    } catch {
-      previewWindow =
-        null;
-    }
-
-    // ----------------------------------------------------------
-    // Show temporary loading page
-    // ----------------------------------------------------------
-
-    if (previewWindow) {
-      try {
-        previewWindow.document.write(`
-          <!DOCTYPE html>
-
-          <html>
-          <head>
-
-            <meta charset="UTF-8">
-
-            <title>
-              Opening file...
-            </title>
-
-            <style>
-
-              body {
-                margin: 0;
-
-                min-height: 100vh;
-
-                display: flex;
-
-                align-items: center;
-
-                justify-content: center;
-
-                font-family:
-                  Arial,
-                  sans-serif;
-
-                background:
-                  #f8fafc;
-
-                color:
-                  #0f172a;
-              }
-
-              .loading-box {
-                text-align: center;
-
-                padding: 30px;
-              }
-
-              .loader {
-                width: 38px;
-
-                height: 38px;
-
-                border:
-                  4px solid
-                  #e2e8f0;
-
-                border-top-color:
-                  #2563eb;
-
-                border-radius:
-                  50%;
-
-                animation:
-                  spin 0.8s
-                  linear
-                  infinite;
-
-                margin:
-                  0 auto 16px;
-              }
-
-              @keyframes spin {
-
-                from {
-                  transform:
-                    rotate(0deg);
-                }
-
-                to {
-                  transform:
-                    rotate(360deg);
-                }
-
-              }
-
-            </style>
-
-          </head>
-
-          <body>
-
-            <div
-              class="loading-box"
-            >
-
-              <div
-                class="loader"
-              ></div>
-
-              <h3>
-                Opening file...
-              </h3>
-
-              <p>
-                Please wait.
-              </p>
-
-            </div>
-
-          </body>
-
-          </html>
-        `);
-
-        previewWindow.document.close();
-
-      } catch {
-        // Ignore popup document errors.
-      }
-    }
-
-    // ----------------------------------------------------------
-    // Append token to URL
-    // ----------------------------------------------------------
-
-    const separator =
-      url.includes("?")
-        ? "&"
-        : "?";
-
-    const authedUrl =
-      `${url}${separator}token=${encodeURIComponent(
-        token
-      )}`;
-
-    let blobUrl =
-      null;
-
-    try {
-
-      // --------------------------------------------------------
-      // Fetch protected file
-      // --------------------------------------------------------
-
-      const response =
-        await fetch(
-          authedUrl,
-          {
-            method:
-              "GET",
-
-            headers: {
-              Authorization:
-                "Bearer " +
-                token,
-
-              Accept:
-                "*/*",
-            },
-
-            credentials:
-              "same-origin",
-
-            cache:
-              "no-store",
-          }
-        );
-
-      // --------------------------------------------------------
-      // Check server response
-      // --------------------------------------------------------
-
-      if (!response.ok) {
-
-        let message =
-          `Request failed (${response.status})`;
-
-        try {
-
-          const contentType =
-            response.headers.get(
-              "content-type"
-            ) || "";
-
-          if (
-            contentType.includes(
-              "application/json"
-            )
-          ) {
-
-            const data =
-              await response.json();
-
-            message =
-              data.error ||
-              data.message ||
-              message;
-
-          } else {
-
-            const errorText =
-              await response.text();
-
-            if (
-              errorText
-            ) {
-              message =
-                errorText;
-            }
-          }
-
-        } catch {
-          // Keep default message.
-        }
-
-        throw new Error(
-          message
-        );
-      }
-
-      // --------------------------------------------------------
-      // Convert response to Blob
-      // --------------------------------------------------------
-
-      const blob =
-        await response.blob();
-
-      if (
-        !blob ||
-        !blob.size
-      ) {
-        throw new Error(
-          "The file returned by the server is empty."
-        );
-      }
-
-      // --------------------------------------------------------
-      // Get MIME type
-      // --------------------------------------------------------
-
-      const mimeType =
-        blob.type ||
-        response.headers.get(
-          "content-type"
-        ) ||
-        "application/octet-stream";
-
-      // --------------------------------------------------------
-      // Create Blob URL
-      // --------------------------------------------------------
-
-      blobUrl =
-        URL.createObjectURL(
-          blob
-        );
-
-      // --------------------------------------------------------
-      // Determine previewable files
-      // --------------------------------------------------------
-
-      const canPreview =
-        mimeType ===
-          "application/pdf" ||
-
-        mimeType.startsWith(
-          "image/"
-        ) ||
-
-        mimeType.startsWith(
-          "text/"
-        );
-
-      // --------------------------------------------------------
-      // OPEN PREVIEWABLE FILE
-      // --------------------------------------------------------
-
-      if (
-        canPreview &&
-        previewWindow &&
-        !previewWindow.closed
-      ) {
-
-        previewWindow.location.href =
-          blobUrl;
-
-        try {
-          previewWindow.focus();
-        } catch {
-          // Ignore.
-        }
-
-        notice(
-          "File opened",
-          `${fileName || "File"} opened in a new tab.`
-        );
-
-      }
-
-      // --------------------------------------------------------
-      // DOWNLOAD FILE
-      // --------------------------------------------------------
-      //
-      // Used for:
-      //
-      // DOC
-      // DOCX
-      // PPT
-      // PPTX
-      // XLS
-      // XLSX
-      // ZIP
-      //
-      // Also used when popup was blocked.
-      //
-
-      else {
-
-        // Close temporary tab if it exists.
-        if (
-          previewWindow &&
-          !previewWindow.closed
-        ) {
-          try {
-            previewWindow.close();
-          } catch {
-            // Ignore.
-          }
-        }
-
-               const link =
-          document.createElement(
-            "a"
-          );
-
-        link.href =
-          blobUrl;
-
-        link.download =
-          fileName ||
-          "document";
-
-        link.style.display = "none";
-        link.setAttribute("aria-hidden", "true");
-        link.rel = "noopener";
-        link.target = "_blank";
-
-        document.body.appendChild(link);
-
-        const downloadEvent = new MouseEvent("click", {
-          bubbles: true,
-          cancelable: true,
-          view: window
-        });
-
-        link.dispatchEvent(downloadEvent);
-
-        setTimeout(() => {
-          try {
-            link.click();
-          } catch {
-            // Ignore; the first click may already have started.
-          }
-        }, 0);
-
-        setTimeout(() => {
-          try {
-            link.remove();
-          } catch {
-            // Ignore.
-          }
-        }, 1000);
-
-        notice(
-          "Download started",
-          `${fileName || "File"} is being downloaded.`
-        );
-      }
-      // --------------------------------------------------------
-      // Keep Blob URL alive for browser
-      // --------------------------------------------------------
-
-      const urlToRevoke =
-        blobUrl;
-
-      blobUrl =
-        null;
-
-      setTimeout(
-        () => {
-          try {
-            URL.revokeObjectURL(
-              urlToRevoke
-            );
-          } catch {
-            // Ignore.
-          }
-        },
-        60000
+  // ============================================================
+
+  function openProtectedFile(
+    url,
+    fileName = "document"
+  ) {
+    const token = getAuthToken();
+
+    if (!token) {
+      notice(
+        "Session expired",
+        "Please log in again.",
+        "err"
       );
+      return;
+    }
+
+    try {
+      const separator =
+        url.includes("?")
+          ? "&"
+          : "?";
+
+      const authedUrl =
+        `${url}${separator}token=${encodeURIComponent(
+          token
+        )}`;
+
+      // --------------------------------------------------------
+      // Direct browser navigation
+      // --------------------------------------------------------
+      //
+      // Do NOT use fetch/blob here.
+      // The backend already sends the correct
+      // Content-Type and Content-Disposition headers.
+      //
+
+      const link =
+        document.createElement("a");
+
+      link.href = authedUrl;
+      link.target = "_blank";
+      link.rel =
+        "noopener noreferrer";
+
+      document.body.appendChild(
+        link
+      );
+
+      link.click();
+
+      link.remove();
 
     } catch (err) {
 
@@ -537,35 +123,6 @@
         "OPEN PROTECTED FILE ERROR:",
         err
       );
-
-      // --------------------------------------------------------
-      // Close loading tab if request failed
-      // --------------------------------------------------------
-
-      if (
-        previewWindow &&
-        !previewWindow.closed
-      ) {
-        try {
-          previewWindow.close();
-        } catch {
-          // Ignore.
-        }
-      }
-
-      // --------------------------------------------------------
-      // Cleanup Blob URL
-      // --------------------------------------------------------
-
-      if (blobUrl) {
-        try {
-          URL.revokeObjectURL(
-            blobUrl
-          );
-        } catch {
-          // Ignore.
-        }
-      }
 
       notice(
         "Could not open file",
@@ -1508,38 +1065,18 @@
     ) {
 
       questionBtn.onclick =
-        async () => {
+        () => {
 
-          const originalText =
-            questionBtn.textContent;
+          const url =
+            `${getApiBase()}/api/student/assignments/${encodeURIComponent(
+              a.id
+            )}/question-paper`;
 
-          questionBtn.disabled =
-            true;
-
-          questionBtn.textContent =
-            "Opening...";
-
-          try {
-
-            const url =
-              `${getApiBase()}/api/student/assignments/${encodeURIComponent(
-                a.id
-              )}/question-paper`;
-
-            await openProtectedFile(
-              url,
-              a.question_original ||
-                "question-paper"
-            );
-
-          } finally {
-
-            questionBtn.disabled =
-              false;
-
-            questionBtn.textContent =
-              originalText;
-          }
+          openProtectedFile(
+            url,
+            a.question_original ||
+              "question-paper"
+          );
         };
     }
 
@@ -1558,38 +1095,18 @@
     ) {
 
       ownSubmissionBtn.onclick =
-        async () => {
+        () => {
 
-          const originalText =
-            ownSubmissionBtn.textContent;
+          const url =
+            `${getApiBase()}/api/student/submissions/${encodeURIComponent(
+              a.submission_id
+            )}/file`;
 
-          ownSubmissionBtn.disabled =
-            true;
-
-          ownSubmissionBtn.textContent =
-            "Opening...";
-
-          try {
-
-            const url =
-              `${getApiBase()}/api/student/submissions/${encodeURIComponent(
-                a.submission_id
-              )}/file`;
-
-            await openProtectedFile(
-              url,
-              a.file_original ||
-                "student-submission"
-            );
-
-          } finally {
-
-            ownSubmissionBtn.disabled =
-              false;
-
-            ownSubmissionBtn.textContent =
-              originalText;
-          }
+          openProtectedFile(
+            url,
+            a.file_original ||
+              "student-submission"
+          );
         };
     }
 
@@ -1727,6 +1244,19 @@
   // ============================================================
   // SAFE DATA ATTRIBUTE BUTTON SEARCH
   // ============================================================
+  //
+  // IMPORTANT:
+  // Use getAttribute() instead of button.dataset[attribute].
+  //
+  // Example:
+  //
+  // data-view-question="10"
+  //
+  // is safely read using:
+  //
+  // button.getAttribute("data-view-question")
+  //
+  // ============================================================
 
   function findButtonByData(
     attribute,
@@ -1743,16 +1273,20 @@
       of buttons
     ) {
 
+      const actualValue =
+        button.getAttribute(
+          `data-${attribute}`
+        );
+
       if (
         String(
-          button.dataset[
-            attribute
-          ]
+          actualValue
         ) ===
         String(
           value
         )
       ) {
+
         return button;
       }
     }
