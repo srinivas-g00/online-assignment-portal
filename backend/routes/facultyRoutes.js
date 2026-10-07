@@ -2630,7 +2630,7 @@ router.post(
   }
 );
 // ============================================================
-// AUTO CORRECTION
+// AI AUTO-CORRECTION + HANDWRITTEN OCR + DUPLICATE DETECTION
 // ============================================================
 
 router.post(
@@ -2639,6 +2639,27 @@ router.post(
     try {
       const assignmentId =
         req.params.id;
+
+      // --------------------------------------------------------
+      // SETTINGS
+      // --------------------------------------------------------
+
+      const {
+        matchThreshold = 70,
+      } = req.body || {};
+
+      const duplicateThreshold =
+        Math.max(
+          1,
+          Math.min(
+            100,
+            Number(matchThreshold) || 70
+          )
+        );
+
+      // --------------------------------------------------------
+      // 1. GET ASSIGNMENT
+      // --------------------------------------------------------
 
       const assignmentResult =
         await db.query(
@@ -2654,63 +2675,77 @@ router.post(
           ]
         );
 
-      if (
-        !assignmentResult.rows.length
-      ) {
-        return res.status(
-          404
-        ).json({
+      const assignment =
+        assignmentResult.rows[0];
+
+      if (!assignment) {
+        return res.status(404).json({
           success: false,
           error:
             "Assignment not found.",
         });
       }
 
-      const assignment =
-        assignmentResult.rows[0];
-
       // --------------------------------------------------------
-      // GET ANSWER KEY
+      // 2. GET TEXT ANSWER KEY
+      // --------------------------------------------------------
+      //
+      // The answer key is already stored as TEXT.
+      // We do NOT OCR the answer key again.
+      //
+      // Priority:
+      // answer_key_text
+      // answer_key_content
+      // answer_key
       // --------------------------------------------------------
 
       let answerKeyText =
-        assignment.answer_key_text ||
-        "";
+        String(
+          assignment.answer_key_text ||
+          assignment.answer_key_content ||
+          ""
+        ).trim();
 
-      if (
-        !answerKeyText &&
-        assignment.answer_key
-      ) {
-        try {
+      // Some older records may have the actual answer
+      // key text inside answer_key.
+      //
+      // Only use answer_key as text when it does not
+      // look like a stored file path.
+
+      if (!answerKeyText) {
+        const possibleKey =
+          String(
+            assignment.answer_key ||
+            ""
+          ).trim();
+
+        if (
+          possibleKey &&
+          !possibleKey.includes("/") &&
+          !possibleKey.includes("\\")
+        ) {
           answerKeyText =
-            await extractTextFromStorage(
-              BUCKETS.keys,
-              assignment.answer_key,
-              assignment.answer_key
-            );
-        } catch (error) {
-          console.error(
-            "ANSWER KEY EXTRACTION ERROR:",
-            error.message
-          );
+            possibleKey;
         }
       }
 
       if (
         !answerKeyText ||
-        answerKeyText.trim().length < 10
+        answerKeyText.length < 10
       ) {
-        return res.status(
-          400
-        ).json({
+        return res.status(400).json({
           success: false,
           error:
-            "Unable to read the answer key. Please upload a readable answer key.",
+            "No usable text answer key was found. Please save the answer key text before running auto-correction.",
         });
       }
 
+      console.log(
+        `[AI GRADING] Answer key loaded. Length: ${answerKeyText.length}`
+      );
+
       // --------------------------------------------------------
-      // GET ALL SUBMISSIONS
+      // 3. GET ALL STUDENT SUBMISSIONS
       // --------------------------------------------------------
 
       const submissionsResult =
@@ -2735,28 +2770,43 @@ router.post(
       const submissions =
         submissionsResult.rows;
 
-      if (!submissions.length) {
-        return res.status(
-          404
-        ).json({
+      if (
+        !submissions ||
+        !submissions.length
+      ) {
+        return res.status(404).json({
           success: false,
           error:
             "No student submissions found.",
         });
       }
 
+      // --------------------------------------------------------
+      // 4. TOTAL MARKS
+      // --------------------------------------------------------
+
       const totalMarks =
         Number(
-          assignment.total_marks
-        ) || 100;
-
-      const matchThreshold =
-        Number(
-          req.body?.matchThreshold
-        ) || 70;
+          assignment.total_marks ||
+          assignment.max_marks ||
+          100
+        );
 
       // --------------------------------------------------------
-      // EXTRACT ALL SUBMISSIONS FIRST
+      // 5. OCR ALL STUDENT SUBMISSIONS FIRST
+      // --------------------------------------------------------
+      //
+      // Handwritten:
+      // JPG / JPEG / PNG / WEBP / BMP
+      //
+      // Scanned PDF:
+      // PDF -> Gemini Vision OCR
+      //
+      // Text/DOCX:
+      // Normal extraction
+      //
+      // We extract everybody BEFORE duplicate detection
+      // because duplicate detection needs the OCR text.
       // --------------------------------------------------------
 
       const extracted =
@@ -2769,21 +2819,45 @@ router.post(
         let answerText =
           "";
 
+        let ocrSuccessful =
+          false;
+
         try {
           if (
             submission.file_path
           ) {
+            console.log(
+              `[OCR] Reading submission ${submission.id}`
+            );
+
             const downloaded =
               await downloadSubmissionFile(
                 submission.file_path
               );
 
-            answerText =
-              await extractTextFromBuffer(
-                downloaded.buffer,
-                submission.file_name ||
-                  downloaded.storagePath
-              );
+            if (
+              downloaded &&
+              downloaded.buffer &&
+              Buffer.isBuffer(
+                downloaded.buffer
+              )
+            ) {
+              answerText =
+                await extractTextFromBuffer(
+                  downloaded.buffer,
+                  submission.file_original ||
+                    downloaded.storagePath ||
+                    submission.file_path
+                );
+
+              if (
+                answerText &&
+                answerText.trim()
+              ) {
+                ocrSuccessful =
+                  true;
+              }
+            }
           }
         } catch (error) {
           console.error(
@@ -2792,18 +2866,28 @@ router.post(
           );
         }
 
+        answerText =
+          String(
+            answerText || ""
+          ).trim();
+
+        console.log(
+          `[OCR] Submission ${submission.id}: ${answerText.length} characters extracted`
+        );
+
         extracted.push({
           submission,
-          answerText:
-            answerText || "",
+          answerText,
+          ocrSuccessful,
         });
       }
 
-      const results = [];
+      // --------------------------------------------------------
+      // 6. PROCESS EACH STUDENT
+      // --------------------------------------------------------
 
-      // --------------------------------------------------------
-      // PROCESS EACH SUBMISSION
-      // --------------------------------------------------------
+      const results =
+        [];
 
       for (
         let i = 0;
@@ -2813,112 +2897,144 @@ router.post(
         const current =
           extracted[i];
 
-        let duplicateSimilarity =
-          0;
+        const currentSubmission =
+          current.submission;
 
-        let matchedWith =
-          null;
+        const studentAnswer =
+          current.answerText;
 
         // ------------------------------------------------------
         // DUPLICATE DETECTION
         // ------------------------------------------------------
+        //
+        // Compare student's OCR answer against every OTHER
+        // student's OCR answer.
+        //
+        // This is NOT used for marks.
+        //
+        // AI grading determines marks.
+        //
+        // Similarity is only used to flag possible duplicates.
+        // ------------------------------------------------------
+
+        let highestSimilarity =
+          0;
+
+        let matchedSubmission =
+          null;
 
         if (
-          current.answerText &&
-          current.answerText.trim()
-            .length >= 20
+          studentAnswer &&
+          studentAnswer.trim()
         ) {
           for (
             let j = 0;
             j < extracted.length;
             j++
           ) {
-            if (
-              i === j
-            ) {
+            if (i === j) {
               continue;
             }
 
             const other =
               extracted[j];
 
+            const otherAnswer =
+              String(
+                other.answerText || ""
+              ).trim();
+
             if (
-              !other.answerText ||
-              other.answerText
-                .trim()
-                .length < 20
+              otherAnswer.length < 20
             ) {
               continue;
             }
 
             const similarity =
               calculateSimilarity(
-                current.answerText,
-                other.answerText
+                studentAnswer,
+                otherAnswer
               );
 
             if (
               similarity >
-              duplicateSimilarity
+              highestSimilarity
             ) {
-              duplicateSimilarity =
+              highestSimilarity =
                 similarity;
 
-              matchedWith =
+              matchedSubmission =
                 other.submission;
             }
           }
         }
 
         const duplicateFlag =
-          duplicateSimilarity >=
-          matchThreshold;
+          highestSimilarity >=
+          duplicateThreshold;
 
         // ------------------------------------------------------
         // AI GRADING
+        // ------------------------------------------------------
+        //
+        // IMPORTANT:
+        // AI receives:
+        //
+        // 1. Assignment title
+        // 2. TEXT ANSWER KEY
+        // 3. OCR'd STUDENT HANDWRITTEN ANSWER
+        // 4. Total marks
+        //
+        // AI grades the actual meaning.
         // ------------------------------------------------------
 
         let aiResult =
           null;
 
         if (
-          current.answerText &&
-          current.answerText
-            .trim()
-            .length >= 20
+          studentAnswer &&
+          studentAnswer.length >= 20
         ) {
           try {
+            console.log(
+              `[AI] Grading submission ${currentSubmission.id}`
+            );
+
             aiResult =
               await gradeWithAI(
                 assignment.title ||
                   "Assignment",
                 answerKeyText,
-                current.answerText,
+                studentAnswer,
                 totalMarks
               );
+
+            if (aiResult) {
+              console.log(
+                `[AI] Submission ${currentSubmission.id} graded: ${aiResult.marks}/${totalMarks}`
+              );
+            }
           } catch (error) {
             console.error(
-              `AI GRADING ERROR FOR SUBMISSION ${current.submission.id}:`,
+              `AI GRADING ERROR FOR SUBMISSION ${currentSubmission.id}:`,
               error.message
             );
           }
         }
 
         // ------------------------------------------------------
-        // MARKS
+        // 7. CALCULATE MARKS
         // ------------------------------------------------------
 
         let marks =
           Number(
             aiResult?.marks ??
-              aiResult?.marksObtained ??
-              0
+            aiResult?.marksObtained ??
+            0
           );
 
         if (
-          Number.isNaN(
-            marks
-          )
+          Number.isNaN(marks)
         ) {
           marks = 0;
         }
@@ -2933,7 +3049,7 @@ router.post(
           );
 
         // ------------------------------------------------------
-        // QUESTION RESULTS
+        // 8. QUESTION-WISE AI RESULTS
         // ------------------------------------------------------
 
         const questionResults =
@@ -2944,32 +3060,41 @@ router.post(
             : [];
 
         // ------------------------------------------------------
-        // REVIEW CONDITIONS
+        // 9. REVIEW CONDITIONS
         // ------------------------------------------------------
 
         const unreadable =
-          !current.answerText ||
-          current.answerText
-            .trim()
-            .length < 20;
+          !studentAnswer ||
+          studentAnswer.length < 20;
 
-        const aiReview =
+        const aiReviewRequired =
           Boolean(
             aiResult?.reviewRequired
           );
 
         const reviewRequired =
           unreadable ||
-          aiReview ||
+          aiReviewRequired ||
           duplicateFlag;
 
         // ------------------------------------------------------
-        // FEEDBACK
+        // 10. BUILD FEEDBACK
         // ------------------------------------------------------
 
         let feedback =
-          aiResult?.feedback ||
-          "";
+          String(
+            aiResult?.feedback ||
+            ""
+          );
+
+        if (!feedback) {
+          feedback =
+            "AI grading completed.";
+        }
+
+        // ------------------------------------------------------
+        // QUESTION-WISE FEEDBACK
+        // ------------------------------------------------------
 
         if (
           questionResults.length
@@ -2989,35 +3114,45 @@ router.post(
           }
         }
 
+        // ------------------------------------------------------
+        // OCR REVIEW MESSAGE
+        // ------------------------------------------------------
+
         if (
           unreadable
         ) {
           feedback +=
             "\n\nMANUAL REVIEW REQUIRED: " +
-            "The submission could not be reliably read.";
+            "The handwritten/scanned submission could not be reliably read.";
         }
 
+        // ------------------------------------------------------
+        // AI REVIEW MESSAGE
+        // ------------------------------------------------------
+
         if (
-          aiReview
+          aiReviewRequired
         ) {
           feedback +=
             "\n\nMANUAL REVIEW REQUIRED: " +
-            "AI grading marked this submission for faculty review.";
+            "AI grading detected unclear content or another condition requiring faculty review.";
         }
+
+        // ------------------------------------------------------
+        // DUPLICATE MESSAGE
+        // ------------------------------------------------------
 
         if (
           duplicateFlag
         ) {
           feedback +=
-            `\n\nDUPLICATE REVIEW FLAG: ` +
-            `${duplicateSimilarity.toFixed(
-              2
-            )}% similarity detected with another submission. ` +
-            `Faculty review is required.`;
+            "\n\nDUPLICATE REVIEW FLAG: " +
+            `${highestSimilarity.toFixed(2)}% similarity detected with another submission. ` +
+            "Faculty review is required.";
         }
 
         // ------------------------------------------------------
-        // SAVE RESULT
+        // 11. SAVE RESULT TO DATABASE
         // ------------------------------------------------------
 
         await db.query(
@@ -3034,28 +3169,41 @@ router.post(
           WHERE id = $6
           `,
           [
-            duplicateSimilarity,
+            highestSimilarity,
+
             duplicateFlag
               ? 1
               : 0,
+
             marks,
+
             marks,
+
             feedback,
-            current.submission.id,
+
+            currentSubmission.id,
           ]
         );
 
+        // ------------------------------------------------------
+        // 12. ADD RESULT TO RESPONSE
+        // ------------------------------------------------------
+
         results.push({
           submissionId:
-            current.submission.id,
+            currentSubmission.id,
 
           studentId:
-            current.submission.student_id,
+            currentSubmission.student_id,
 
           studentName:
-            current.submission.student_name ||
-            current.submission.student_username ||
+            currentSubmission.student_name ||
+            currentSubmission.student_username ||
             "Student",
+
+          studentUsername:
+            currentSubmission.student_username ||
+            "",
 
           marks,
 
@@ -3072,26 +3220,31 @@ router.post(
                 )
               : 0,
 
+          ocrSuccessful,
+
+          extractedAnswer:
+            studentAnswer,
+
           reviewRequired,
 
           duplicateFlag,
 
           duplicateSimilarity:
             Number(
-              duplicateSimilarity.toFixed(
+              highestSimilarity.toFixed(
                 2
               )
             ),
 
           matchedWith:
-            matchedWith
+            matchedSubmission
               ? {
                   submissionId:
-                    matchedWith.id,
+                    matchedSubmission.id,
 
                   studentName:
-                    matchedWith.student_name ||
-                    matchedWith.student_username ||
+                    matchedSubmission.student_name ||
+                    matchedSubmission.student_username ||
                     "Student",
                 }
               : null,
@@ -3103,14 +3256,40 @@ router.post(
       }
 
       // --------------------------------------------------------
-      // RESPONSE
+      // 13. FILTER DUPLICATES
+      // --------------------------------------------------------
+      //
+      // This gives the faculty frontend a separate list of
+      // possible duplicate submissions.
+      // --------------------------------------------------------
+
+      const duplicateResults =
+        results.filter(
+          (item) =>
+            item.duplicateFlag
+        );
+
+      const cleanResults =
+        results.filter(
+          (item) =>
+            !item.duplicateFlag
+        );
+
+      const reviewResults =
+        results.filter(
+          (item) =>
+            item.reviewRequired
+        );
+
+      // --------------------------------------------------------
+      // 14. FINAL RESPONSE
       // --------------------------------------------------------
 
       return res.json({
         success: true,
 
         message:
-          "AI grading, OCR and duplicate detection completed successfully.",
+          "Handwritten OCR, AI correction, marks calculation and duplicate detection completed successfully.",
 
         assignmentId,
 
@@ -3122,19 +3301,43 @@ router.post(
         totalSubmissions:
           submissions.length,
 
-        reviewedSubmissions:
+        successfullyRead:
           results.filter(
             (item) =>
-              item.reviewRequired
+              item.ocrSuccessful
           ).length,
+
+        unreadableSubmissions:
+          results.filter(
+            (item) =>
+              !item.ocrSuccessful
+          ).length,
+
+        reviewedSubmissions:
+          reviewResults.length,
 
         duplicateSubmissions:
-          results.filter(
-            (item) =>
-              item.duplicateFlag
-          ).length,
+          duplicateResults.length,
 
+        normalSubmissions:
+          cleanResults.length,
+
+        duplicateThreshold,
+
+        // All results
         results,
+
+        // Only possible duplicates
+        duplicates:
+          duplicateResults,
+
+        // Only non-duplicate submissions
+        cleanSubmissions:
+          cleanResults,
+
+        // Anything requiring faculty review
+        reviewRequired:
+          reviewResults,
       });
     } catch (error) {
       console.error(
@@ -3142,22 +3345,21 @@ router.post(
         error
       );
 
-      return res.status(
-        500
-      ).json({
+      return res.status(500).json({
         success: false,
+
         error:
           "Auto-correction failed.",
+
         details:
-          process.env.NODE_ENV ===
-          "development"
-            ? error.message
-            : undefined,
+          error.message,
+
+        reviewRequired:
+          true,
       });
     }
   }
 );
-
 
 // ============================================================
 // CHECK DUPLICATE SUBMISSIONS ONLY
