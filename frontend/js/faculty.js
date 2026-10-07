@@ -577,74 +577,91 @@
   // ============================================================
   // OPEN ASSIGNMENT (WITH IN-VIEW DELETE)
   // ============================================================
+async function openAssignment(id) {
+  try {
+    // The submissions endpoint returns an ARRAY of submissions.
+    const submissionsResponse =
+      await api(
+        `/api/faculty/assignments/${encodeURIComponent(id)}/submissions`
+      );
 
-  async function openAssignment(id) {
-    try {
-    const response =
-  await api(
-    `/api/faculty/assignments/${encodeURIComponent(id)}/submissions`
-  );
+    const submissions =
+      Array.isArray(submissionsResponse)
+        ? submissionsResponse
+        : (
+            submissionsResponse &&
+            Array.isArray(submissionsResponse.submissions)
+          )
+          ? submissionsResponse.submissions
+          : [];
 
-// Support both:
-// { assignment: {...}, submissions: [...] }
-// and:
-// { data: { assignment: {...}, submissions: [...] } }
+    // Get assignment information separately.
+    const assignmentsResponse =
+      await api(
+        "/api/faculty/assignments"
+      );
 
-const payload =
-  response && response.data
-    ? response.data
-    : response || {};
+    const assignments =
+      Array.isArray(assignmentsResponse)
+        ? assignmentsResponse
+        : (
+            assignmentsResponse &&
+            Array.isArray(assignmentsResponse.assignments)
+          )
+          ? assignmentsResponse.assignments
+          : [];
 
-const a =
-  payload.assignment ||
-  payload.assignmentData ||
-  null;
+    const a =
+      assignments.find(
+        (assignment) =>
+          String(assignment.id) ===
+          String(id)
+      );
 
-const submissions =
-  Array.isArray(payload.submissions)
-    ? payload.submissions
-    : [];
+    if (!a) {
+      console.error(
+        "Assignment not found.",
+        {
+          requestedId: id,
+          assignments
+        }
+      );
 
-if (!a || !a.id) {
-  console.error(
-    "OPEN ASSIGNMENT: Invalid API response",
-    response
-  );
+      throw new Error(
+        "Assignment information could not be found."
+      );
+    }
 
-  throw new Error(
-    "Assignment data was not returned by the server."
-  );
-}
+    if ($("assignmentDetailWrap")) {
+      $("assignmentDetailWrap")
+        .classList.remove("hidden");
+    }
 
-      if ($("assignmentDetailWrap")) {
-        $("assignmentDetailWrap")
-          .classList.remove("hidden");
-      }
+    if (!$("assignmentDetail")) {
+      return;
+    }
 
-      if (!$("assignmentDetail")) {
-        return;
-      }
+    const token =
+      getAuthToken();
 
-      const token = getAuthToken();
+    const timePart =
+      (
+        a.due_time ||
+        "23:59:59"
+      ).slice(0, 8);
 
-      const timePart =
-        (
-          a.due_time ||
-          "23:59:59"
-        ).slice(0, 8);
+    const datePart =
+      String(
+        a.due_date || ""
+      )
+        .split("T")[0]
+        .split(" ")[0];
 
-      const datePart =
-        String(
-          a.due_date || ""
-        )
-          .split("T")[0]
-          .split(" ")[0];
-
-      const duplicateList =
-        submissions.filter(
-          (s) => s.duplicate_flag
-        );
-
+    const duplicateList =
+      submissions.filter(
+        (s) => s.duplicate_flag
+      );
+  
       // ========================================================
       // ASSIGNMENT DETAIL HTML
       // ========================================================
