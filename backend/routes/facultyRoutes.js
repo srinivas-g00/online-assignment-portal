@@ -1,7 +1,9 @@
 // backend/routes/facultyRoutes.js
 
 const express = require("express");
+
 const path = require("path");
+
 const fs = require("fs");
 
 const db = require("../config/db");
@@ -10,6 +12,14 @@ const {
   auth,
   requireRole,
 } = require("../middleware/auth");
+
+const {
+  visionExtractBuffer,
+} = require("../utils/grading");
+
+const {
+  gradeWithAI,
+} = require("../utils/aiGrading");
 
 // ============================================================
 // SUPABASE STORAGE
@@ -36,13 +46,20 @@ const router = express.Router();
 // ============================================================
 
 router.use((req, res, next) => {
-  if (!req.headers.authorization && req.query && req.query.token) {
-    req.headers.authorization = `Bearer ${req.query.token}`;
+  if (
+    !req.headers.authorization &&
+    req.query &&
+    req.query.token
+  ) {
+    req.headers.authorization =
+      `Bearer ${req.query.token}`;
   }
+
   next();
 });
 
 router.use(auth);
+
 router.use(requireRole("faculty"));
 
 // ============================================================
@@ -58,12 +75,9 @@ async function extractTextFromBuffer(
       return "";
     }
 
-    const extension =
-      path
-        .extname(
-          String(fileName || "")
-        )
-        .toLowerCase();
+    const extension = path
+      .extname(String(fileName || ""))
+      .toLowerCase();
 
     // --------------------------------------------------------
     // TXT
@@ -103,6 +117,8 @@ async function extractTextFromBuffer(
     // --------------------------------------------------------
 
     if (extension === ".pdf") {
+      let extracted = "";
+
       try {
         const pdfParse =
           require("pdf-parse");
@@ -110,15 +126,87 @@ async function extractTextFromBuffer(
         const data =
           await pdfParse(buffer);
 
-        return data.text || "";
+        extracted =
+          data.text || "";
       } catch (err) {
         console.warn(
-          "PDF EXTRACTION ERROR:",
+          "PDF TEXT EXTRACTION ERROR:",
           err.message
         );
-
-        return "";
       }
+
+      // Use vision OCR for scanned/image-only PDFs.
+      if (
+        extracted.trim().length < 100 &&
+        typeof visionExtractBuffer ===
+          "function"
+      ) {
+        try {
+          const visionText =
+            await visionExtractBuffer(
+              buffer,
+              "application/pdf"
+            );
+
+          if (
+            visionText &&
+            visionText.trim()
+          ) {
+            return visionText;
+          }
+        } catch (err) {
+          console.warn(
+            "PDF VISION OCR ERROR:",
+            err.message
+          );
+        }
+      }
+
+      return extracted;
+    }
+
+    // --------------------------------------------------------
+    // IMAGE / HANDWRITTEN SUBMISSION
+    // --------------------------------------------------------
+
+    if (
+      [
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+        ".bmp",
+      ].includes(extension)
+    ) {
+      if (
+        typeof visionExtractBuffer ===
+        "function"
+      ) {
+        try {
+          const mimeType =
+            extension === ".png"
+              ? "image/png"
+              : extension === ".webp"
+              ? "image/webp"
+              : extension === ".bmp"
+              ? "image/bmp"
+              : "image/jpeg";
+
+          return (
+            (await visionExtractBuffer(
+              buffer,
+              mimeType
+            )) || ""
+          );
+        } catch (err) {
+          console.warn(
+            "IMAGE VISION OCR ERROR:",
+            err.message
+          );
+        }
+      }
+
+      return "";
     }
 
     return "";
@@ -133,7 +221,8 @@ async function extractTextFromBuffer(
 }
 
 // ============================================================
-// TEXT EXTRACTION FROM SUPABASE STORAGE (WITH LOCAL FALLBACK)
+// TEXT EXTRACTION FROM SUPABASE STORAGE
+// WITH LOCAL FALLBACK
 // ============================================================
 
 async function extractTextFromStorage(
@@ -155,18 +244,38 @@ async function extractTextFromStorage(
           storagePath
         );
     } catch {
-      const folder = bucket === BUCKETS.keys ? "keys" : "answers";
-      const localPath = path.join(__dirname, "..", "uploads", folder, path.basename(storagePath));
-      if (fs.existsSync(localPath)) {
-        buffer = fs.readFileSync(localPath);
+      const folder =
+        bucket === BUCKETS.keys
+          ? "keys"
+          : "answers";
+
+      const localPath =
+        path.join(
+          __dirname,
+          "..",
+          "uploads",
+          folder,
+          path.basename(storagePath)
+        );
+
+      if (
+        fs.existsSync(localPath)
+      ) {
+        buffer =
+          fs.readFileSync(
+            localPath
+          );
       }
     }
 
-    if (!buffer) return "";
+    if (!buffer) {
+      return "";
+    }
 
     return await extractTextFromBuffer(
       buffer,
-      originalName || storagePath
+      originalName ||
+        storagePath
     );
   } catch (err) {
     console.warn(
@@ -210,13 +319,13 @@ function getPossibleStoragePaths(
 
   const withoutUploads =
     noLeadingSlash.replace(
-      /^uploads\/+/i,
+      /^uploads\//i,
       ""
     );
 
   const withoutAnswers =
     withoutUploads.replace(
-      /^answers\/+/i,
+      /^answers\//i,
       ""
     );
 
@@ -248,7 +357,8 @@ function getPossibleStoragePaths(
 }
 
 // ============================================================
-// DOWNLOAD STUDENT SUBMISSION (WITH LOCAL FALLBACK)
+// DOWNLOAD STUDENT SUBMISSION
+// WITH LOCAL FALLBACK
 // ============================================================
 
 async function downloadSubmissionFile(
@@ -262,7 +372,10 @@ async function downloadSubmissionFile(
   let lastError =
     null;
 
+  // ----------------------------------------------------------
   // 1. Try Supabase candidates
+  // ----------------------------------------------------------
+
   for (
     const candidate
     of possiblePaths
@@ -289,17 +402,30 @@ async function downloadSubmissionFile(
     }
   }
 
+  // ----------------------------------------------------------
   // 2. Search bucket by filename
+  // ----------------------------------------------------------
+
   try {
     const supabase =
       getSupabase();
 
     const fileName =
       path.basename(
-        String(storagePath || "").replace(/\\/g, "/").trim()
+        String(
+          storagePath || ""
+        )
+          .replace(
+            /\\/g,
+            "/"
+          )
+          .trim()
       );
 
-    if (fileName && supabase) {
+    if (
+      fileName &&
+      supabase
+    ) {
       const {
         data,
         error,
@@ -317,10 +443,16 @@ async function downloadSubmissionFile(
             }
           );
 
-      if (!error && Array.isArray(data)) {
+      if (
+        !error &&
+        Array.isArray(data)
+      ) {
         const exactMatch =
           data.find(
-            (item) => item && item.name === fileName
+            (item) =>
+              item &&
+              item.name ===
+                fileName
           );
 
         if (exactMatch) {
@@ -330,7 +462,10 @@ async function downloadSubmissionFile(
               exactMatch.name
             );
 
-          if (buffer && buffer.length) {
+          if (
+            buffer &&
+            buffer.length
+          ) {
             return {
               buffer,
               storagePath:
@@ -344,20 +479,54 @@ async function downloadSubmissionFile(
     lastError = err;
   }
 
-  // 3. Fallback to Local Disk (/uploads/answers)
+  // ----------------------------------------------------------
+  // 3. Fallback to Local Disk
+  // ----------------------------------------------------------
+
   const cleanFileName =
-    path.basename(String(storagePath || "").replace(/\\/g, "/").trim());
+    path.basename(
+      String(
+        storagePath || ""
+      )
+        .replace(
+          /\\/g,
+          "/"
+        )
+        .trim()
+    );
 
   const localDiskPath =
-    path.join(__dirname, "..", "uploads", "answers", cleanFileName);
+    path.join(
+      __dirname,
+      "..",
+      "uploads",
+      "answers",
+      cleanFileName
+    );
 
-  if (fs.existsSync(localDiskPath)) {
-    const localBuffer = fs.readFileSync(localDiskPath);
-    if (localBuffer && localBuffer.length) {
-      console.log(`[Storage] Loaded submission file from local disk: ${cleanFileName}`);
+  if (
+    fs.existsSync(
+      localDiskPath
+    )
+  ) {
+    const localBuffer =
+      fs.readFileSync(
+        localDiskPath
+      );
+
+    if (
+      localBuffer &&
+      localBuffer.length
+    ) {
+      console.log(
+        `[Storage] Loaded submission file from local disk: ${cleanFileName}`
+      );
+
       return {
-        buffer: localBuffer,
-        storagePath: cleanFileName,
+        buffer:
+          localBuffer,
+        storagePath:
+          cleanFileName,
       };
     }
   }
@@ -491,6 +660,9 @@ function getMimeType(
 
     ".webp":
       "image/webp",
+
+    ".bmp":
+      "image/bmp",
 
     ".zip":
       "application/zip",
@@ -747,158 +919,59 @@ router.post(
         500
       ).json({
         error:
-          "Could not update enrollment decision.",
+          "Could not update enrollment.",
       });
     }
   }
 );
 
 // ============================================================
-// CREATE ASSIGNMENT
+// FACULTY DASHBOARD
 // ============================================================
 
-router.post(
-  "/assignments",
-  uploadQuestion,
+router.get(
+  "/dashboard",
   async (
     req,
     res
   ) => {
-    const {
-      title,
-      description,
-      totalMarks,
-      dueDate,
-      dueTime,
-    } = req.body;
-
-    if (
-      !title ||
-      !totalMarks ||
-      !dueDate ||
-      !dueTime
-    ) {
-      return res.status(
-        400
-      ).json({
-        error:
-          "Title, total marks, due date and due time are required.",
-      });
-    }
-
-    let storagePath =
-      null;
-
     try {
-      if (req.file) {
-        try {
-          const uploaded =
-            await uploadToSupabase(
-              req.file,
-              BUCKETS.questions
-            );
-
-          storagePath =
-            uploaded.path;
-        } catch (supErr) {
-          console.warn("[Storage Fallback] Supabase question upload warning:", supErr.message);
-        }
-
-        // Always save a local copy as resilient backup
-        if (req.file.buffer) {
-          const destDir = path.join(__dirname, "..", "uploads", "questions");
-          if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
-          const safeName = storagePath ? path.basename(storagePath) : `${Date.now()}-${req.file.originalname}`;
-          fs.writeFileSync(path.join(destDir, safeName), req.file.buffer);
-          if (!storagePath) storagePath = safeName;
-        }
-      }
-
       const result =
         await db.query(
           `
-          INSERT INTO assignments
-          (
-            faculty_id,
-            title,
-            description,
-            question_file,
-            question_original,
-            total_marks,
-            due_date,
-            due_time,
-            closed
-          )
-          VALUES
-          (
-            $1,
-            $2,
-            $3,
-            $4,
-            $5,
-            $6,
-            $7,
-            $8,
-            FALSE
-          )
-          RETURNING id
+          SELECT
+            (SELECT COUNT(*)
+             FROM enrollments
+             WHERE faculty_id = $1
+               AND status = 'accepted') AS accepted_students,
+
+            (SELECT COUNT(*)
+             FROM enrollments
+             WHERE faculty_id = $1
+               AND status = 'pending') AS pending_students,
+
+            (SELECT COUNT(*)
+             FROM assignments
+             WHERE faculty_id = $1) AS total_assignments,
+
+            (SELECT COUNT(*)
+             FROM submissions s
+             JOIN assignments a
+               ON a.id = s.assignment_id
+             WHERE a.faculty_id = $1) AS total_submissions
           `,
           [
             req.user.id,
-
-            String(
-              title
-            ).trim(),
-
-            String(
-              description ||
-                ""
-            ).trim(),
-
-            storagePath,
-
-            req.file
-              ? req.file.originalname
-              : null,
-
-            Number(
-              totalMarks
-            ),
-
-            dueDate,
-
-            dueTime,
           ]
         );
 
-      return res.json({
-        success: true,
-
-        message:
-          "Assignment posted.",
-
-        assignmentId:
-          result.rows[0].id,
-      });
+      return res.json(
+        result.rows[0] ||
+          {}
+      );
     } catch (err) {
-      if (storagePath) {
-        try {
-          await deleteFromSupabase(
-            BUCKETS.questions,
-            storagePath
-          );
-        } catch (
-          cleanupError
-        ) {
-          console.error(
-            "QUESTION FILE CLEANUP ERROR:",
-            cleanupError.message
-          );
-        }
-      }
-
       console.error(
-        "CREATE ASSIGNMENT ERROR:",
+        "DASHBOARD ERROR:",
         err.message
       );
 
@@ -906,15 +979,14 @@ router.post(
         500
       ).json({
         error:
-          "Failed to create assignment: " +
-          err.message,
+          "Could not load dashboard.",
       });
     }
   }
 );
 
 // ============================================================
-// LIST FACULTY ASSIGNMENTS
+// ASSIGNMENTS
 // ============================================================
 
 router.get(
@@ -927,23 +999,10 @@ router.get(
       const result =
         await db.query(
           `
-          SELECT
-            a.*,
-
-            (
-              SELECT COUNT(*)
-              FROM submissions s
-              WHERE s.assignment_id =
-                    a.id
-            ) AS submission_count
-
-          FROM assignments a
-
-          WHERE a.faculty_id = $1
-
-          ORDER BY
-            a.due_date DESC,
-            a.due_time DESC
+          SELECT *
+          FROM assignments
+          WHERE faculty_id = $1
+          ORDER BY id DESC
           `,
           [
             req.user.id,
@@ -970,6 +1029,277 @@ router.get(
 );
 
 // ============================================================
+// GET SINGLE ASSIGNMENT
+// ============================================================
+
+router.get(
+  "/assignments/:id",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      const result =
+        await db.query(
+          `
+          SELECT *
+          FROM assignments
+          WHERE id = $1
+            AND faculty_id = $2
+          `,
+          [
+            req.params.id,
+            req.user.id,
+          ]
+        );
+
+      if (
+        !result.rows.length
+      ) {
+        return res.status(
+          404
+        ).json({
+          error:
+            "Assignment not found.",
+        });
+      }
+
+      return res.json(
+        result.rows[0]
+      );
+    } catch (err) {
+      console.error(
+        "GET ASSIGNMENT ERROR:",
+        err.message
+      );
+
+      return res.status(
+        500
+      ).json({
+        error:
+          "Could not fetch assignment.",
+      });
+    }
+  }
+);
+
+// ============================================================
+// CREATE ASSIGNMENT
+// ============================================================
+
+router.post(
+  "/assignments",
+  uploadQuestion,
+  async (
+    req,
+    res
+  ) => {
+    let questionFilePath =
+      null;
+
+    try {
+      const {
+        title,
+        description,
+        totalMarks,
+        dueDate,
+      } = req.body;
+
+      if (!title) {
+        return res.status(
+          400
+        ).json({
+          error:
+            "Assignment title is required.",
+        });
+      }
+
+      if (req.file) {
+        try {
+          const uploaded =
+            await uploadToSupabase(
+              req.file,
+              BUCKETS.questions
+            );
+
+          questionFilePath =
+            uploaded.path;
+        } catch (uploadError) {
+          const safeName =
+            `${Date.now()}-${req.file.originalname}`;
+
+          const destDir =
+            path.join(
+              __dirname,
+              "..",
+              "uploads",
+              "questions"
+            );
+
+          if (
+            !fs.existsSync(
+              destDir
+            )
+          ) {
+            fs.mkdirSync(
+              destDir,
+              {
+                recursive: true,
+              }
+            );
+          }
+
+          fs.writeFileSync(
+            path.join(
+              destDir,
+              safeName
+            ),
+            req.file.buffer
+          );
+
+          questionFilePath =
+            safeName;
+        }
+      }
+
+      const result =
+        await db.query(
+          `
+          INSERT INTO assignments (
+            faculty_id,
+            title,
+            description,
+            total_marks,
+            due_date,
+            question_file
+          )
+          VALUES (
+            $1,
+            $2,
+            $3,
+            $4,
+            $5,
+            $6
+          )
+          RETURNING *
+          `,
+          [
+            req.user.id,
+            title,
+            description ||
+              "",
+            Number(
+              totalMarks
+            ) || 0,
+            dueDate ||
+              null,
+            questionFilePath,
+          ]
+        );
+
+      return res.status(
+        201
+      ).json({
+        success: true,
+        assignment:
+          result.rows[0],
+      });
+    } catch (err) {
+      console.error(
+        "CREATE ASSIGNMENT ERROR:",
+        err.message
+      );
+
+      return res.status(
+        500
+      ).json({
+        error:
+          "Could not create assignment.",
+      });
+    }
+  }
+);
+
+// ============================================================
+// UPDATE ASSIGNMENT
+// ============================================================
+
+router.put(
+  "/assignments/:id",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      const {
+        title,
+        description,
+        totalMarks,
+        dueDate,
+      } = req.body;
+
+      const result =
+        await db.query(
+          `
+          UPDATE assignments
+          SET
+            title = COALESCE($1, title),
+            description = COALESCE($2, description),
+            total_marks = COALESCE($3, total_marks),
+            due_date = COALESCE($4, due_date)
+          WHERE id = $5
+            AND faculty_id = $6
+          RETURNING *
+          `,
+          [
+            title,
+            description,
+            totalMarks !==
+            undefined
+              ? Number(
+                  totalMarks
+                )
+              : null,
+            dueDate ||
+              null,
+            req.params.id,
+            req.user.id,
+          ]
+        );
+
+      if (
+        !result.rows.length
+      ) {
+        return res.status(
+          404
+        ).json({
+          error:
+            "Assignment not found.",
+        });
+      }
+
+      return res.json({
+        success: true,
+        assignment:
+          result.rows[0],
+      });
+    } catch (err) {
+      console.error(
+        "UPDATE ASSIGNMENT ERROR:",
+        err.message
+      );
+
+      return res.status(
+        500
+      ).json({
+        error:
+          "Could not update assignment.",
+      });
+    }
+  }
+);
+
+// ============================================================
 // DELETE ASSIGNMENT
 // ============================================================
 
@@ -979,20 +1309,11 @@ router.delete(
     req,
     res
   ) => {
-    const client =
-      await db.connect();
-
     try {
-      await client.query("BEGIN");
-
-      // 1. Verify assignment belongs to logged-in faculty
-      const checkRes =
-        await client.query(
+      const result =
+        await db.query(
           `
-          SELECT
-            id,
-            question_file,
-            answer_key_file
+          SELECT *
           FROM assignments
           WHERE id = $1
             AND faculty_id = $2
@@ -1004,97 +1325,68 @@ router.delete(
         );
 
       const assignment =
-        checkRes.rows[0];
+        result.rows[0];
 
       if (!assignment) {
-        await client.query("ROLLBACK");
-        return res.status(404).json({
+        return res.status(
+          404
+        ).json({
           error:
-            "Assignment not found or you do not have permission to delete it.",
+            "Assignment not found.",
         });
       }
 
-      // 2. Fetch submissions to clean up any submitted files
-      const subRes =
-        await client.query(
-          `
-          SELECT file_path
-          FROM submissions
-          WHERE assignment_id = $1
-          `,
-          [assignment.id]
-        );
-
-      // 3. Remove submission answer files from storage
-      for (const sub of subRes.rows) {
-        if (sub.file_path) {
-          try {
-            await deleteFromSupabase(
-              BUCKETS.answers,
-              sub.file_path
-            );
-          } catch (_) {}
-        }
-      }
-
-      // 4. Remove question paper file from storage
-      if (assignment.question_file) {
+      if (
+        assignment.question_file
+      ) {
         try {
           await deleteFromSupabase(
             BUCKETS.questions,
             assignment.question_file
           );
-        } catch (_) {}
+        } catch {}
       }
 
-      // 5. Remove answer key file from storage
-      if (assignment.answer_key_file) {
+      if (
+        assignment.answer_key_file
+      ) {
         try {
           await deleteFromSupabase(
             BUCKETS.keys,
             assignment.answer_key_file
           );
-        } catch (_) {}
+        } catch {}
       }
 
-      // 6. Delete dependent submissions rows (foreign key constraint)
-      await client.query(
-        `
-        DELETE FROM submissions
-        WHERE assignment_id = $1
-        `,
-        [assignment.id]
-      );
-
-      // 7. Delete the assignment record
-      await client.query(
+      await db.query(
         `
         DELETE FROM assignments
         WHERE id = $1
+          AND faculty_id = $2
         `,
-        [assignment.id]
+        [
+          req.params.id,
+          req.user.id,
+        ]
       );
-
-      await client.query("COMMIT");
 
       return res.json({
         success: true,
         message:
-          "Assignment and all associated records deleted successfully.",
+          "Assignment deleted successfully.",
       });
     } catch (err) {
-      await client.query("ROLLBACK");
       console.error(
         "DELETE ASSIGNMENT ERROR:",
         err.message
       );
-      return res.status(500).json({
+
+      return res.status(
+        500
+      ).json({
         error:
-          "Could not delete assignment: " +
-          err.message,
+          "Could not delete assignment.",
       });
-    } finally {
-      client.release();
     }
   }
 );
@@ -1113,7 +1405,7 @@ router.get(
       const assignmentResult =
         await db.query(
           `
-          SELECT *
+          SELECT id
           FROM assignments
           WHERE id = $1
             AND faculty_id = $2
@@ -1124,10 +1416,9 @@ router.get(
           ]
         );
 
-      const assignment =
-        assignmentResult.rows[0];
-
-      if (!assignment) {
+      if (
+        !assignmentResult.rows.length
+      ) {
         return res.status(
           404
         ).json({
@@ -1136,38 +1427,27 @@ router.get(
         });
       }
 
-      const submissionResult =
+      const result =
         await db.query(
           `
           SELECT
             s.*,
-
             u.name AS student_name,
             u.username AS student_username
-
           FROM submissions s
-
           JOIN users u
-            ON u.id =
-               s.student_id
-
-          WHERE s.assignment_id =
-                $1
-
-          ORDER BY
-            s.submitted_at ASC
+            ON u.id = s.student_id
+          WHERE s.assignment_id = $1
+          ORDER BY s.submitted_at ASC
           `,
           [
             req.params.id,
           ]
         );
 
-      return res.json({
-        assignment,
-
-        submissions:
-          submissionResult.rows,
-      });
+      return res.json(
+        result.rows || []
+      );
     } catch (err) {
       console.error(
         "GET SUBMISSIONS ERROR:",
@@ -1183,13 +1463,173 @@ router.get(
     }
   }
 );
+// ============================================================
+// ANSWER KEY UPLOAD
+// ============================================================
+
+router.post(
+  "/assignments/:id/answer-key",
+  uploadKey,
+  async (req, res) => {
+    try {
+      const assignmentId =
+        req.params.id;
+
+      const assignmentResult =
+        await db.query(
+          `
+          SELECT *
+          FROM assignments
+          WHERE id = $1
+            AND faculty_id = $2
+          `,
+          [
+            assignmentId,
+            req.user.id,
+          ]
+        );
+
+      if (
+        !assignmentResult.rows.length
+      ) {
+        return res.status(
+          404
+        ).json({
+          error:
+            "Assignment not found.",
+        });
+      }
+
+      if (!req.file) {
+        return res.status(
+          400
+        ).json({
+          error:
+            "Answer key file is required.",
+        });
+      }
+
+      let answerKeyPath =
+        null;
+
+      try {
+        const uploaded =
+          await uploadToSupabase(
+            req.file,
+            BUCKETS.keys
+          );
+
+        answerKeyPath =
+          uploaded.path;
+      } catch (uploadError) {
+        console.warn(
+          "Answer key Supabase upload failed. Using local storage:",
+          uploadError.message
+        );
+
+        const safeName =
+          `${Date.now()}-${req.file.originalname}`;
+
+        const destDir =
+          path.join(
+            __dirname,
+            "..",
+            "uploads",
+            "keys"
+          );
+
+        if (
+          !fs.existsSync(
+            destDir
+          )
+        ) {
+          fs.mkdirSync(
+            destDir,
+            {
+              recursive: true,
+            }
+          );
+        }
+
+        const localPath =
+          path.join(
+            destDir,
+            safeName
+          );
+
+        fs.writeFileSync(
+          localPath,
+          req.file.buffer
+        );
+
+        answerKeyPath =
+          safeName;
+      }
+
+      let answerKeyText = "";
+
+      try {
+        answerKeyText =
+          await extractTextFromBuffer(
+            req.file.buffer,
+            req.file.originalname
+          );
+      } catch (error) {
+        console.warn(
+          "Answer key OCR failed:",
+          error.message
+        );
+      }
+
+      await db.query(
+        `
+        UPDATE assignments
+        SET
+          answer_key = $1,
+          answer_key_text = $2
+        WHERE id = $3
+          AND faculty_id = $4
+        `,
+        [
+          answerKeyPath,
+          answerKeyText || "",
+          assignmentId,
+          req.user.id,
+        ]
+      );
+
+      return res.json({
+        success: true,
+        message:
+          "Answer key uploaded successfully.",
+        answerKey:
+          answerKeyPath,
+        extractedTextLength:
+          answerKeyText.length,
+      });
+    } catch (err) {
+      console.error(
+        "ANSWER KEY UPLOAD ERROR:",
+        err.message
+      );
+
+      return res.status(
+        500
+      ).json({
+        error:
+          "Could not upload answer key.",
+      });
+    }
+  }
+);
+
 
 // ============================================================
-// VIEW / DOWNLOAD STUDENT SUBMISSION
+// DOWNLOAD / VIEW ASSIGNMENT QUESTION
 // ============================================================
 
 router.get(
-  "/submissions/:submissionId/file",
+  "/assignments/:id/question",
   async (
     req,
     res
@@ -1199,16 +1639,328 @@ router.get(
         await db.query(
           `
           SELECT
-            s.id,
-            s.file_path,
-            s.file_original,
-            s.file_size,
-            s.submitted_at,
+            question_file
+          FROM assignments
+          WHERE id = $1
+            AND faculty_id = $2
+          `,
+          [
+            req.params.id,
+            req.user.id,
+          ]
+        );
 
-            a.id AS assignment_id,
+      if (
+        !result.rows.length
+      ) {
+        return res.status(
+          404
+        ).json({
+          error:
+            "Assignment not found.",
+        });
+      }
+
+      const questionFile =
+        result.rows[0]
+          .question_file;
+
+      if (!questionFile) {
+        return res.status(
+          404
+        ).json({
+          error:
+            "Question file not found.",
+        });
+      }
+
+      try {
+        const buffer =
+          await downloadFromSupabase(
+            BUCKETS.questions,
+            questionFile
+          );
+
+        const mimeType =
+          getMimeType(
+            questionFile
+          );
+
+        res.setHeader(
+          "Content-Type",
+          mimeType
+        );
+
+        res.setHeader(
+          "Content-Disposition",
+          `inline; filename="${path.basename(
+            questionFile
+          )}"`
+        );
+
+        return res.send(
+          buffer
+        );
+      } catch (storageError) {
+        const localPath =
+          path.join(
+            __dirname,
+            "..",
+            "uploads",
+            "questions",
+            path.basename(
+              questionFile
+            )
+          );
+
+        if (
+          fs.existsSync(
+            localPath
+          )
+        ) {
+          res.setHeader(
+            "Content-Type",
+            getMimeType(
+              questionFile
+            )
+          );
+
+          return res.send(
+            fs.readFileSync(
+              localPath
+            )
+          );
+        }
+
+        throw storageError;
+      }
+    } catch (err) {
+      console.error(
+        "QUESTION DOWNLOAD ERROR:",
+        err.message
+      );
+
+      return res.status(
+        404
+      ).json({
+        error:
+          "Question file could not be found.",
+      });
+    }
+  }
+);
+
+
+// ============================================================
+// DOWNLOAD / VIEW ANSWER KEY
+// ============================================================
+
+router.get(
+  "/assignments/:id/answer-key",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      const result =
+        await db.query(
+          `
+          SELECT
+            answer_key
+          FROM assignments
+          WHERE id = $1
+            AND faculty_id = $2
+          `,
+          [
+            req.params.id,
+            req.user.id,
+          ]
+        );
+
+      if (
+        !result.rows.length
+      ) {
+        return res.status(
+          404
+        ).json({
+          error:
+            "Assignment not found.",
+        });
+      }
+
+      const answerKey =
+        result.rows[0]
+          .answer_key;
+
+      if (!answerKey) {
+        return res.status(
+          404
+        ).json({
+          error:
+            "Answer key not found.",
+        });
+      }
+
+      try {
+        const buffer =
+          await downloadFromSupabase(
+            BUCKETS.keys,
+            answerKey
+          );
+
+        res.setHeader(
+          "Content-Type",
+          getMimeType(
+            answerKey
+          )
+        );
+
+        res.setHeader(
+          "Content-Disposition",
+          `inline; filename="${path.basename(
+            answerKey
+          )}"`
+        );
+
+        return res.send(
+          buffer
+        );
+      } catch (storageError) {
+        const localPath =
+          path.join(
+            __dirname,
+            "..",
+            "uploads",
+            "keys",
+            path.basename(
+              answerKey
+            )
+          );
+
+        if (
+          fs.existsSync(
+            localPath
+          )
+        ) {
+          res.setHeader(
+            "Content-Type",
+            getMimeType(
+              answerKey
+            )
+          );
+
+          return res.send(
+            fs.readFileSync(
+              localPath
+            )
+          );
+        }
+
+        throw storageError;
+      }
+    } catch (err) {
+      console.error(
+        "ANSWER KEY DOWNLOAD ERROR:",
+        err.message
+      );
+
+      return res.status(
+        404
+      ).json({
+        error:
+          "Answer key could not be found.",
+      });
+    }
+  }
+);
+
+
+// ============================================================
+// SINGLE SUBMISSION
+// ============================================================
+
+router.get(
+  "/submissions/:id",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      const result =
+        await db.query(
+          `
+          SELECT
+            s.*,
+            u.name AS student_name,
+            u.username AS student_username,
+            u.email AS student_email,
             a.title AS assignment_title,
-            a.faculty_id
+            a.total_marks
+          FROM submissions s
+          JOIN assignments a
+            ON a.id =
+               s.assignment_id
+          JOIN users u
+            ON u.id =
+               s.student_id
+          WHERE s.id = $1
+            AND a.faculty_id = $2
+          `,
+          [
+            req.params.id,
+            req.user.id,
+          ]
+        );
 
+      if (
+        !result.rows.length
+      ) {
+        return res.status(
+          404
+        ).json({
+          error:
+            "Submission not found.",
+        });
+      }
+
+      return res.json(
+        result.rows[0]
+      );
+    } catch (err) {
+      console.error(
+        "GET SUBMISSION ERROR:",
+        err.message
+      );
+
+      return res.status(
+        500
+      ).json({
+        error:
+          "Could not fetch submission.",
+      });
+    }
+  }
+);
+
+
+// ============================================================
+// VIEW SUBMISSION FILE
+// ============================================================
+
+router.get(
+  "/submissions/:id/file",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      const result =
+        await db.query(
+          `
+          SELECT
+            s.file_path,
+            s.file_name,
+            s.assignment_id
           FROM submissions s
 
           JOIN assignments a
@@ -1219,872 +1971,13 @@ router.get(
             AND a.faculty_id = $2
           `,
           [
-            req.params.submissionId,
-            req.user.id,
-          ]
-        );
-
-      const submission =
-        result.rows[0];
-
-      if (!submission) {
-        return res.status(
-          404
-        ).json({
-          error:
-            "Submission not found or you do not have permission to access it.",
-        });
-      }
-
-      if (
-        !submission.file_path ||
-        !String(
-          submission.file_path
-        ).trim()
-      ) {
-        return res.status(
-          404
-        ).json({
-          error:
-            "No submitted file is attached to this submission.",
-        });
-      }
-
-      let downloadResult;
-
-      try {
-        downloadResult =
-          await downloadSubmissionFile(
-            submission.file_path
-          );
-      } catch (
-        storageError
-      ) {
-        return res.status(
-          404
-        ).json({
-          error:
-            "Student submission file was not found in storage.",
-        });
-      }
-
-      const buffer =
-        downloadResult.buffer;
-
-      const displayName =
-        String(
-          submission.file_original ||
-            path.basename(
-              downloadResult.storagePath
-            ) ||
-            "student-submission"
-        )
-          .replace(
-            /["\r\n]/g,
-            "_"
-          );
-
-      const mimeType =
-        getMimeType(
-          displayName
-        );
-
-      res.setHeader(
-        "Content-Type",
-        mimeType
-      );
-
-      res.setHeader(
-        "Content-Length",
-        buffer.length
-      );
-
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename="${displayName}"`
-      );
-
-      res.setHeader(
-        "Cache-Control",
-        "private, no-store, max-age=0"
-      );
-
-      return res.send(
-        buffer
-      );
-    } catch (err) {
-      console.error(
-        "VIEW STUDENT SUBMISSION ERROR:",
-        err.message
-      );
-
-      if (!res.headersSent) {
-        return res.status(
-          500
-        ).json({
-          error:
-            "Could not open student submission: " +
-            err.message,
-        });
-      }
-    }
-  }
-);
-
-// ============================================================
-// FACULTY QUESTION PAPER VIEW (WITH LOCAL FALLBACK)
-// ============================================================
-
-router.get(
-  "/assignments/:id/question-paper",
-  async (
-    req,
-    res
-  ) => {
-    try {
-      const result =
-        await db.query(
-          `
-          SELECT
-            id,
-            question_file,
-            question_original
-
-          FROM assignments
-
-          WHERE id = $1
-            AND faculty_id = $2
-          `,
-          [
             req.params.id,
             req.user.id,
           ]
         );
 
-      const assignment =
-        result.rows[0];
-
-      if (!assignment) {
-        return res.status(
-          404
-        ).json({
-          error:
-            "Assignment not found.",
-        });
-      }
-
       if (
-        !assignment.question_file
-      ) {
-        return res.status(
-          404
-        ).json({
-          error:
-            "Question paper has not been uploaded.",
-        });
-      }
-
-      const possiblePaths =
-        getPossibleStoragePaths(
-          assignment.question_file
-        );
-
-      let buffer =
-        null;
-
-      let usedPath =
-        null;
-
-      for (
-        const candidate
-        of possiblePaths
-      ) {
-        try {
-          buffer =
-            await downloadFromSupabase(
-              BUCKETS.questions,
-              candidate
-            );
-
-          usedPath =
-            candidate;
-
-          break;
-        } catch {
-          /* try next candidate */
-        }
-      }
-
-      if (!buffer) {
-        const localPath = path.join(
-          __dirname,
-          "..",
-          "uploads",
-          "questions",
-          path.basename(assignment.question_file)
-        );
-        if (fs.existsSync(localPath)) {
-          buffer = fs.readFileSync(localPath);
-        }
-      }
-
-      if (!buffer) {
-        return res.status(
-          404
-        ).json({
-          error:
-            "Question paper was not found in storage.",
-        });
-      }
-
-      const displayName =
-        assignment.question_original ||
-        path.basename(
-          usedPath ||
-            assignment.question_file
-        );
-
-      res.setHeader(
-        "Content-Type",
-        getMimeType(
-          displayName
-        )
-      );
-
-      res.setHeader(
-        "Content-Length",
-        buffer.length
-      );
-
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename="${String(
-          displayName
-        ).replace(
-          /["\r\n]/g,
-          "_"
-        )}"`
-      );
-
-      res.setHeader(
-        "Cache-Control",
-        "private, no-store"
-      );
-
-      return res.send(
-        buffer
-      );
-    } catch (err) {
-      console.error(
-        "FACULTY QUESTION PAPER ERROR:",
-        err.message
-      );
-
-      if (!res.headersSent) {
-        return res.status(
-          500
-        ).json({
-          error:
-            "Could not open question paper.",
-        });
-      }
-    }
-  }
-);
-
-// ============================================================
-// SET / UPDATE ANSWER KEY
-// ============================================================
-
-router.post(
-  "/assignments/:id/answer-key",
-  uploadKey,
-  async (
-    req,
-    res
-  ) => {
-    let storagePath =
-      null;
-
-    try {
-      const assignmentResult =
-        await db.query(
-          `
-          SELECT *
-          FROM assignments
-
-          WHERE id = $1
-            AND faculty_id = $2
-          `,
-          [
-            req.params.id,
-            req.user.id,
-          ]
-        );
-
-      const assignment =
-        assignmentResult.rows[0];
-
-      if (!assignment) {
-        return res.status(
-          404
-        ).json({
-          error:
-            "Assignment not found.",
-        });
-      }
-
-      let keyText =
-        String(
-          req.body.keyText ||
-            ""
-        ).trim();
-
-      if (req.file) {
-        try {
-          const uploaded =
-            await uploadToSupabase(
-              req.file,
-              BUCKETS.keys
-            );
-
-          storagePath =
-            uploaded.path;
-        } catch {
-          const safeName = `${Date.now()}-${req.file.originalname}`;
-          const destDir = path.join(__dirname, "..", "uploads", "keys");
-          if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
-          fs.writeFileSync(path.join(destDir, safeName), req.file.buffer);
-          storagePath = safeName;
-        }
-
-        const extracted =
-          await extractTextFromBuffer(
-            req.file.buffer,
-            req.file.originalname
-          );
-
-        if (extracted) {
-          keyText = [
-            keyText,
-            extracted,
-          ]
-            .filter(Boolean)
-            .join("\n");
-        }
-      }
-
-      if (
-        !keyText &&
-        !storagePath
-      ) {
-        return res.status(
-          400
-        ).json({
-          error:
-            "Provide answer-key text or upload a key document.",
-        });
-      }
-
-      await db.query(
-        `
-        UPDATE assignments
-
-        SET
-          answer_key = $1,
-
-          answer_key_file =
-            COALESCE(
-              $2,
-              answer_key_file
-            )
-
-        WHERE id = $3
-        `,
-        [
-          keyText,
-          storagePath,
-          assignment.id,
-        ]
-      );
-
-      return res.json({
-        success: true,
-
-        message:
-          "Answer key saved. You can now run auto-correction.",
-      });
-    } catch (err) {
-      console.error(
-        "SET ANSWER KEY ERROR:",
-        err.message
-      );
-
-      return res.status(
-        500
-      ).json({
-        error:
-          "Could not save answer key: " +
-          err.message,
-      });
-    }
-  }
-);
-
-// ============================================================
-// AUTO-CORRECTION + DUPLICATE DETECTION
-// ============================================================
-
-router.post(
-  "/assignments/:id/auto-correct",
-  async (
-    req,
-    res
-  ) => {
-    try {
-      const assignmentId =
-        req.params.id;
-
-      const {
-        penaltyMarks = 0,
-        matchThreshold = 70,
-      } = req.body;
-
-      const penalty =
-        Math.max(
-          0,
-          Number(
-            penaltyMarks
-          ) || 0
-        );
-
-      const threshold =
-        Math.max(
-          1,
-          Math.min(
-            100,
-            Number(
-              matchThreshold
-            ) || 70
-          )
-        );
-
-      const assignmentResult =
-        await db.query(
-          `
-          SELECT *
-          FROM assignments
-
-          WHERE id = $1
-            AND faculty_id = $2
-          `,
-          [
-            assignmentId,
-            req.user.id,
-          ]
-        );
-
-      const assignment =
-        assignmentResult.rows[0];
-
-      if (!assignment) {
-        return res.status(
-          404
-        ).json({
-          error:
-            "Assignment not found.",
-        });
-      }
-
-      let answerKeyText =
-        String(
-          assignment.answer_key ||
-            ""
-        );
-
-      if (
-        assignment.answer_key_file
-      ) {
-        const extractedKey =
-          await extractTextFromStorage(
-            BUCKETS.keys,
-            assignment.answer_key_file,
-            assignment.answer_key_file
-          );
-
-        if (extractedKey) {
-          answerKeyText = [
-            answerKeyText,
-            extractedKey,
-          ]
-            .filter(Boolean)
-            .join("\n");
-        }
-      }
-
-      if (
-        !answerKeyText.trim()
-      ) {
-        return res.status(
-          400
-        ).json({
-          error:
-            "No usable answer key was found. Save an answer key before running auto-correction.",
-        });
-      }
-
-      const submissionResult =
-        await db.query(
-          `
-          SELECT
-            s.*,
-
-            u.name AS student_name,
-            u.username AS student_username
-
-          FROM submissions s
-
-          JOIN users u
-            ON u.id =
-               s.student_id
-
-          WHERE s.assignment_id =
-                $1
-
-          ORDER BY
-            s.submitted_at ASC
-          `,
-          [
-            assignmentId,
-          ]
-        );
-
-      const submissions =
-        submissionResult.rows;
-
-      if (
-        !submissions.length
-      ) {
-        return res.status(
-          400
-        ).json({
-          error:
-            "No submissions to evaluate.",
-        });
-      }
-
-      // ------------------------------------------------------
-      // DOWNLOAD + EXTRACT STUDENT FILES
-      // ------------------------------------------------------
-
-      for (
-        const sub
-        of submissions
-      ) {
-        sub.extractedText =
-          "";
-
-        if (
-          !sub.file_path
-        ) {
-          continue;
-        }
-
-        try {
-          const storageResult =
-            await downloadSubmissionFile(
-              sub.file_path
-            );
-
-          sub.extractedText =
-            await extractTextFromBuffer(
-              storageResult.buffer,
-              sub.file_original ||
-                storageResult.storagePath
-            );
-        } catch (
-          err
-        ) {
-          console.warn(
-            "SUBMISSION EXTRACTION ERROR:",
-            sub.id,
-            err.message
-          );
-
-          sub.extractedText =
-            "";
-        }
-      }
-
-      // ------------------------------------------------------
-      // DUPLICATE DETECTION
-      // ------------------------------------------------------
-
-      for (
-        let i = 0;
-        i <
-        submissions.length;
-        i++
-      ) {
-        submissions[i]
-          .duplicate_flag =
-          false;
-
-        submissions[i]
-          .matched_with =
-          [];
-
-        for (
-          let j = 0;
-          j <
-          submissions.length;
-          j++
-        ) {
-          if (
-            i === j
-          ) {
-            continue;
-          }
-
-          const text1 =
-            submissions[i]
-              .extractedText;
-
-          const text2 =
-            submissions[j]
-              .extractedText;
-
-          if (
-            !text1 ||
-            !text1.trim() ||
-            !text2 ||
-            !text2.trim()
-          ) {
-            continue;
-          }
-
-          const similarity =
-            calculateSimilarity(
-              text1,
-              text2
-            );
-
-          if (
-            similarity >=
-            70
-          ) {
-            submissions[i]
-              .duplicate_flag =
-              true;
-
-            submissions[i]
-              .matched_with
-              .push({
-                name:
-                  submissions[j]
-                    .student_name,
-
-                pct:
-                  similarity,
-              });
-          }
-        }
-      }
-
-      // ------------------------------------------------------
-      // SCORE SUBMISSIONS
-      // ------------------------------------------------------
-
-      for (
-        const sub
-        of submissions
-      ) {
-        const answerText =
-          String(
-            sub.extractedText ||
-              ""
-          ).trim();
-
-        const keySimilarity =
-          answerText &&
-          answerKeyText.trim()
-            ? calculateSimilarity(
-                answerText,
-                answerKeyText
-              )
-            : 0;
-
-        const totalMarks =
-          Number(
-            assignment.total_marks
-          ) || 0;
-
-        let calculatedMarks =
-          0;
-
-        if (
-          keySimilarity >=
-          threshold
-        ) {
-          calculatedMarks =
-            totalMarks;
-        } else if (
-          keySimilarity > 0
-        ) {
-          calculatedMarks =
-            Math.round(
-              (
-                keySimilarity /
-                threshold
-              ) *
-                totalMarks
-            );
-        }
-
-        let feedback =
-          `AI Score: ${keySimilarity}% match with answer key.`;
-
-        if (
-          !answerText
-        ) {
-          feedback =
-            "AI Score: 0% - no readable text could be extracted from the submission.";
-        }
-
-        if (
-          sub.duplicate_flag
-        ) {
-          calculatedMarks =
-            Math.max(
-              0,
-              calculatedMarks -
-                penalty
-            );
-
-          const duplicateNames =
-            sub.matched_with
-              .map(
-                (m) =>
-                  `${m.name} (${m.pct}%)`
-              )
-              .join(
-                ", "
-              );
-
-          feedback +=
-            ` [DUPLICATE DETECTED: Similar to ${duplicateNames}. Deducted ${penalty} marks.]`;
-        }
-
-        calculatedMarks =
-          Math.max(
-            0,
-            Math.min(
-              totalMarks,
-              Number(
-                calculatedMarks
-              ) || 0
-            )
-          );
-
-        await db.query(
-          `
-          UPDATE submissions
-
-          SET
-            similarity_pct = $1,
-            duplicate_flag = $2,
-            final_marks = $3,
-            auto_marks = $4,
-            auto_feedback = $5,
-            graded = TRUE,
-            posted = FALSE
-
-          WHERE id = $6
-          `,
-          [
-            keySimilarity,
-            sub.duplicate_flag,
-            calculatedMarks,
-            calculatedMarks,
-            feedback,
-            sub.id,
-          ]
-        );
-      }
-
-      return res.json({
-        success: true,
-
-        message:
-          "Auto-correction completed successfully.",
-
-        submissionsEvaluated:
-          submissions.length,
-      });
-    } catch (err) {
-      console.error(
-        "AUTO CORRECT ERROR:",
-        err.message
-      );
-
-      return res.status(
-        500
-      ).json({
-        error:
-          "Auto-correction failed: " +
-          err.message,
-      });
-    }
-  }
-);
-
-// ============================================================
-// MANUALLY CHANGE ASSIGNMENT MARKS
-// ============================================================
-
-router.put(
-  "/submissions/:id/marks",
-  async (
-    req,
-    res
-  ) => {
-    const {
-      marks,
-    } = req.body;
-
-    try {
-      const result =
-        await db.query(
-          `
-          SELECT
-            s.*,
-            a.faculty_id,
-            a.total_marks
-
-          FROM submissions s
-
-          JOIN assignments a
-            ON a.id =
-               s.assignment_id
-
-          WHERE s.id = $1
-          `,
-          [
-            req.params.id,
-          ]
-        );
-
-      const sub =
-        result.rows[0];
-
-      if (
-        !sub ||
-        Number(
-          sub.faculty_id
-        ) !==
-          Number(
-            req.user.id
-          )
+        !result.rows.length
       ) {
         return res.status(
           404
@@ -2094,68 +1987,141 @@ router.put(
         });
       }
 
-      const maxMarks =
-        Number(
-          sub.total_marks
-        ) || 100;
+      const submission =
+        result.rows[0];
 
-      const parsedMarks =
-        Number(
-          marks
-        );
+      const storagePath =
+        submission.file_path;
 
-      if (
-        Number.isNaN(
-          parsedMarks
-        ) ||
-        parsedMarks < 0
-      ) {
+      if (!storagePath) {
         return res.status(
-          400
+          404
         ).json({
           error:
-            "Enter a valid mark value.",
+            "Submission file path is missing.",
         });
       }
 
-      const finalMarks =
-        Math.max(
-          0,
-          Math.min(
-            maxMarks,
-            parsedMarks
-          )
+      const downloaded =
+        await downloadSubmissionFile(
+          storagePath
         );
 
-      await db.query(
-        `
-        UPDATE submissions
+      const fileName =
+        submission.file_name ||
+        path.basename(
+          downloaded.storagePath
+        );
 
-        SET
-          final_marks = $1,
-          graded = TRUE,
-          posted = FALSE
-
-        WHERE id = $2
-        `,
-        [
-          finalMarks,
-          sub.id,
-        ]
+      res.setHeader(
+        "Content-Type",
+        getMimeType(
+          fileName
+        )
       );
+
+      res.setHeader(
+        "Content-Disposition",
+        `inline; filename="${fileName.replace(
+          /"/g,
+          ""
+        )}"`
+      );
+
+      return res.send(
+        downloaded.buffer
+      );
+    } catch (err) {
+      console.error(
+        "VIEW SUBMISSION ERROR:",
+        err.message
+      );
+
+      return res.status(
+        404
+      ).json({
+        error:
+          "Submission file could not be loaded.",
+      });
+    }
+  }
+);
+
+
+// ============================================================
+// EXTRACT TEXT FROM SINGLE SUBMISSION
+// ============================================================
+
+router.get(
+  "/submissions/:id/extracted-text",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      const result =
+        await db.query(
+          `
+          SELECT
+            s.file_path,
+            s.file_name,
+            a.faculty_id
+          FROM submissions s
+
+          JOIN assignments a
+            ON a.id =
+               s.assignment_id
+
+          WHERE s.id = $1
+            AND a.faculty_id = $2
+          `,
+          [
+            req.params.id,
+            req.user.id,
+          ]
+        );
+
+      if (
+        !result.rows.length
+      ) {
+        return res.status(
+          404
+        ).json({
+          error:
+            "Submission not found.",
+        });
+      }
+
+      const submission =
+        result.rows[0];
+
+      const downloaded =
+        await downloadSubmissionFile(
+          submission.file_path
+        );
+
+      const text =
+        await extractTextFromBuffer(
+          downloaded.buffer,
+          submission.file_name ||
+            downloaded.storagePath
+        );
 
       return res.json({
         success: true,
-
-        message:
-          "Marks updated.",
-
-        marks:
-          finalMarks,
+        submissionId:
+          req.params.id,
+        text:
+          text || "",
+        readable:
+          Boolean(
+            text &&
+            text.trim().length
+          ),
       });
     } catch (err) {
       console.error(
-        "UPDATE MARKS ERROR:",
+        "EXTRACT SUBMISSION TEXT ERROR:",
         err.message
       );
 
@@ -2163,14 +2129,133 @@ router.put(
         500
       ).json({
         error:
-          "Could not update marks.",
+          "Could not extract submission text.",
       });
     }
   }
 );
 
+
 // ============================================================
-// POST ASSIGNMENT MARKS
+// MANUAL GRADE SUBMISSION
+// ============================================================
+
+router.put(
+  "/submissions/:id/grade",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      const {
+        marks,
+        feedback,
+      } = req.body;
+
+      const result =
+        await db.query(
+          `
+          SELECT
+            s.id,
+            a.total_marks
+          FROM submissions s
+          JOIN assignments a
+            ON a.id =
+               s.assignment_id
+          WHERE s.id = $1
+            AND a.faculty_id = $2
+          `,
+          [
+            req.params.id,
+            req.user.id,
+          ]
+        );
+
+      if (
+        !result.rows.length
+      ) {
+        return res.status(
+          404
+        ).json({
+          error:
+            "Submission not found.",
+        });
+      }
+
+      const totalMarks =
+        Number(
+          result.rows[0]
+            .total_marks
+        ) || 100;
+
+      let finalMarks =
+        Number(marks);
+
+      if (
+        Number.isNaN(
+          finalMarks
+        )
+      ) {
+        return res.status(
+          400
+        ).json({
+          error:
+            "Marks must be a valid number.",
+        });
+      }
+
+      finalMarks =
+        Math.max(
+          0,
+          Math.min(
+            totalMarks,
+            finalMarks
+          )
+        );
+
+      await db.query(
+        `
+        UPDATE submissions
+        SET
+          final_marks = $1,
+          auto_marks = $1,
+          auto_feedback = $2,
+          graded = 1
+        WHERE id = $3
+        `,
+        [
+          finalMarks,
+          feedback || "",
+          req.params.id,
+        ]
+      );
+
+      return res.json({
+        success: true,
+        marks:
+          finalMarks,
+        feedback:
+          feedback || "",
+      });
+    } catch (err) {
+      console.error(
+        "MANUAL GRADE ERROR:",
+        err.message
+      );
+
+      return res.status(
+        500
+      ).json({
+        error:
+          "Could not save grade.",
+      });
+    }
+  }
+);
+
+
+// ============================================================
+// POST MARKS TO STUDENT
 // ============================================================
 
 router.post(
@@ -2184,9 +2269,7 @@ router.post(
         await db.query(
           `
           SELECT
-            s.*,
-            a.faculty_id
-
+            s.id
           FROM submissions s
 
           JOIN assignments a
@@ -2194,23 +2277,16 @@ router.post(
                s.assignment_id
 
           WHERE s.id = $1
+            AND a.faculty_id = $2
           `,
           [
             req.params.id,
+            req.user.id,
           ]
         );
 
-      const sub =
-        result.rows[0];
-
       if (
-        !sub ||
-        Number(
-          sub.faculty_id
-        ) !==
-          Number(
-            req.user.id
-          )
+        !result.rows.length
       ) {
         return res.status(
           404
@@ -2220,41 +2296,23 @@ router.post(
         });
       }
 
-      if (
-        sub.final_marks ===
-          null ||
-        sub.final_marks ===
-          undefined
-      ) {
-        return res.status(
-          400
-        ).json({
-          error:
-            "Set marks before posting.",
-        });
-      }
-
       await db.query(
         `
         UPDATE submissions
-
         SET
-          posted = TRUE,
-          posted_at =
-            CURRENT_TIMESTAMP
-
+          posted = 1,
+          graded = 1
         WHERE id = $1
         `,
         [
-          sub.id,
+          req.params.id,
         ]
       );
 
       return res.json({
         success: true,
-
         message:
-          "Marks posted to student.",
+          "Marks posted successfully.",
       });
     } catch (err) {
       console.error(
@@ -2272,335 +2330,23 @@ router.post(
   }
 );
 
+
 // ============================================================
-// CREATE EXAM WITH QUESTIONS
+// POST ALL GRADED MARKS
 // ============================================================
 
 router.post(
-  "/exams",
-  async (
-    req,
-    res
-  ) => {
-    const {
-      title,
-      examDate,
-      startTime,
-      durationMin,
-      questions,
-      subject,
-    } = req.body;
-
-    if (
-      !title ||
-      !examDate ||
-      !startTime ||
-      !durationMin ||
-      !Array.isArray(
-        questions
-      ) ||
-      !questions.length
-    ) {
-      return res.status(
-        400
-      ).json({
-        error:
-          "Title, date, start time, duration and at least one question are required.",
-      });
-    }
-
-    for (
-      const q
-      of questions
-    ) {
-      if (
-        !q.questionText ||
-        !q.optionA ||
-        !q.optionB ||
-        !q.optionC ||
-        !q.optionD ||
-        !q.correctOption
-      ) {
-        return res.status(
-          400
-        ).json({
-          error:
-            "Every question must contain question text, four options and correct option.",
-        });
-      }
-    }
-
-    const totalMarks =
-      questions.reduce(
-        (
-          sum,
-          q
-        ) =>
-          sum +
-          (
-            Number(
-              q.marks
-            ) || 1
-          ),
-        0
-      );
-
-    const client =
-      await db.connect();
-
-    try {
-      await client.query(
-        "BEGIN"
-      );
-
-      const examResult =
-        await client.query(
-          `
-          INSERT INTO exams
-          (
-            faculty_id,
-            title,
-            exam_date,
-            start_time,
-            duration_min,
-            total_marks,
-            subject
-          )
-          VALUES
-          (
-            $1,
-            $2,
-            $3,
-            $4,
-            $5,
-            $6,
-            $7
-          )
-          RETURNING id
-          `,
-          [
-            req.user.id,
-
-            String(
-              title
-            ).trim(),
-
-            examDate,
-
-            startTime,
-
-            Number(
-              durationMin
-            ),
-
-            totalMarks,
-
-            subject
-              ? String(
-                  subject
-                ).trim()
-              : null,
-          ]
-        );
-
-      const examId =
-        examResult
-          .rows[0]
-          .id;
-
-      for (
-        const q
-        of questions
-      ) {
-        const correctOption =
-          String(
-            q.correctOption
-          )
-            .trim()
-            .toUpperCase();
-
-        const qParams = [
-          examId,
-          String(q.questionText).trim(),
-          String(q.optionA).trim(),
-          String(q.optionB).trim(),
-          String(q.optionC).trim(),
-          String(q.optionD).trim(),
-          correctOption,
-          Math.max(1, Number(q.marks) || 1),
-        ];
-
-        // Insert into exam_questions
-        await client.query(
-          `
-          INSERT INTO exam_questions
-          (
-            exam_id,
-            question_text,
-            option_a,
-            option_b,
-            option_c,
-            option_d,
-            correct_option,
-            marks
-          )
-          VALUES
-          (
-            $1,
-            $2,
-            $3,
-            $4,
-            $5,
-            $6,
-            $7,
-            $8
-          )
-          `,
-          qParams
-        );
-
-        // Synchronize into questions table as fallback
-        try {
-          await client.query(
-            `
-            INSERT INTO questions
-            (
-              exam_id,
-              question_text,
-              option_a,
-              option_b,
-              option_c,
-              option_d,
-              correct_option,
-              marks
-            )
-            VALUES
-            (
-              $1,
-              $2,
-              $3,
-              $4,
-              $5,
-              $6,
-              $7,
-              $8
-            )
-            `,
-            qParams
-          );
-        } catch {
-          /* questions table fallback */
-        }
-      }
-
-      await client.query(
-        "COMMIT"
-      );
-
-      return res.json({
-        success: true,
-
-        message:
-          "Exam created.",
-
-        examId,
-      });
-    } catch (err) {
-      try {
-        await client.query(
-          "ROLLBACK"
-        );
-      } catch (
-        rollbackError
-      ) {
-        console.error(
-          "ROLLBACK ERROR:",
-          rollbackError.message
-        );
-      }
-
-      console.error(
-        "CREATE EXAM ERROR:",
-        err.message
-      );
-
-      return res.status(
-        500
-      ).json({
-        error:
-          "Could not create exam: " +
-          err.message,
-      });
-    } finally {
-      client.release();
-    }
-  }
-);
-
-// ============================================================
-// LIST MY EXAMS
-// ============================================================
-
-router.get(
-  "/exams",
+  "/assignments/:id/post-all",
   async (
     req,
     res
   ) => {
     try {
-      const result =
+      const assignmentResult =
         await db.query(
           `
-          SELECT *
-          FROM exams
-
-          WHERE faculty_id = $1
-
-          ORDER BY
-            exam_date DESC,
-            start_time DESC
-          `,
-          [
-            req.user.id,
-          ]
-        );
-
-      return res.json(
-        result.rows || []
-      );
-    } catch (err) {
-      console.error(
-        "LIST EXAMS ERROR:",
-        err.message
-      );
-
-      return res.status(
-        500
-      ).json({
-        error:
-          "Could not fetch exams.",
-      });
-    }
-  }
-);
-
-// ============================================================
-// EXAM RESULTS
-// ============================================================
-
-router.get(
-  "/exams/:id/results",
-  async (
-    req,
-    res
-  ) => {
-    try {
-      const examResult =
-        await db.query(
-          `
-          SELECT *
-          FROM exams
-
+          SELECT id
+          FROM assignments
           WHERE id = $1
             AND faculty_id = $2
           `,
@@ -2610,194 +2356,42 @@ router.get(
           ]
         );
 
-      const exam =
-        examResult.rows[0];
-
-      if (!exam) {
+      if (
+        !assignmentResult.rows.length
+      ) {
         return res.status(
           404
         ).json({
           error:
-            "Exam not found.",
+            "Assignment not found.",
         });
       }
 
       const result =
         await db.query(
           `
-          SELECT
-            at.id,
-            at.exam_id,
-            at.student_id,
-            at.started_at,
-            at.submitted_at,
-            at.score,
-            at.auto_submitted,
-
-            COALESCE(
-              at.posted,
-              0
-            ) AS posted,
-
-            u.name AS student_name,
-            u.username AS student_username
-
-          FROM exam_attempts at
-
-          JOIN users u
-            ON u.id =
-               at.student_id
-
-          WHERE at.exam_id = $1
-
-          ORDER BY
-            at.submitted_at
-              DESC NULLS LAST
-          `,
-          [
-            exam.id,
-          ]
-        );
-
-      return res.json({
-        exam,
-
-        results:
-          result.rows,
-      });
-    } catch (err) {
-      console.error(
-        "GET EXAM RESULTS ERROR:",
-        err.message
-      );
-
-      return res.status(
-        500
-      ).json({
-        error:
-          "Could not fetch exam results.",
-      });
-    }
-  }
-);
-
-// ============================================================
-// EDIT EXAM SCORE
-// ============================================================
-
-router.put(
-  "/exam-attempts/:id/score",
-  async (
-    req,
-    res
-  ) => {
-    const {
-      score,
-    } = req.body;
-
-    try {
-      const result =
-        await db.query(
-          `
-          SELECT
-            at.*,
-            ex.faculty_id,
-            ex.total_marks
-
-          FROM exam_attempts at
-
-          JOIN exams ex
-            ON ex.id =
-               at.exam_id
-
-          WHERE at.id = $1
+          UPDATE submissions
+          SET
+            posted = 1,
+            graded = 1
+          WHERE assignment_id = $1
+            AND graded = 1
           `,
           [
             req.params.id,
           ]
         );
 
-      const attempt =
-        result.rows[0];
-
-      if (
-        !attempt ||
-        Number(
-          attempt.faculty_id
-        ) !==
-          Number(
-            req.user.id
-          )
-      ) {
-        return res.status(
-          404
-        ).json({
-          error:
-            "Attempt not found.",
-        });
-      }
-
-      const maxMarks =
-        Number(
-          attempt.total_marks
-        ) || 100;
-
-      const parsedScore =
-        Number(
-          score
-        );
-
-      if (
-        Number.isNaN(
-          parsedScore
-        ) ||
-        parsedScore < 0
-      ) {
-        return res.status(
-          400
-        ).json({
-          error:
-            "Enter a valid score.",
-        });
-      }
-
-      const finalScore =
-        Math.max(
-          0,
-          Math.min(
-            maxMarks,
-            parsedScore
-          )
-        );
-
-      await db.query(
-        `
-        UPDATE exam_attempts
-
-        SET
-          score = $1,
-          posted = 0::smallint
-
-        WHERE id = $2
-        `,
-        [
-          finalScore,
-          attempt.id,
-        ]
-      );
-
       return res.json({
         success: true,
-
         message:
-          "Score updated successfully.",
-
-        score:
-          finalScore,
+          "All graded marks posted successfully.",
+        updated:
+          result.rowCount,
       });
     } catch (err) {
       console.error(
-        "UPDATE EXAM SCORE ERROR:",
+        "POST ALL MARKS ERROR:",
         err.message
       );
 
@@ -2805,11 +2399,1951 @@ router.put(
         500
       ).json({
         error:
-          "Could not update score.",
+          "Could not post all marks.",
       });
     }
   }
 );
+
+
+// ============================================================
+// AI AUTO-GRADE ONE SUBMISSION
+// ============================================================
+
+router.post(
+  "/submissions/:id/ai-grade",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      const result =
+        await db.query(
+          `
+          SELECT
+            s.*,
+            a.title AS assignment_title,
+            a.total_marks,
+            a.answer_key,
+            a.answer_key_text
+          FROM submissions s
+
+          JOIN assignments a
+            ON a.id =
+               s.assignment_id
+
+          WHERE s.id = $1
+            AND a.faculty_id = $2
+          `,
+          [
+            req.params.id,
+            req.user.id,
+          ]
+        );
+
+      if (
+        !result.rows.length
+      ) {
+        return res.status(
+          404
+        ).json({
+          error:
+            "Submission not found.",
+        });
+      }
+
+      const submission =
+        result.rows[0];
+
+      const downloaded =
+        await downloadSubmissionFile(
+          submission.file_path
+        );
+
+      const studentAnswer =
+        await extractTextFromBuffer(
+          downloaded.buffer,
+          submission.file_name ||
+            downloaded.storagePath
+        );
+
+      if (
+        !studentAnswer ||
+        studentAnswer.trim()
+          .length < 20
+      ) {
+        return res.status(
+          400
+        ).json({
+          error:
+            "The student submission could not be read. Manual review is required.",
+          reviewRequired:
+            true,
+        });
+      }
+
+      let answerKeyText =
+        submission.answer_key_text ||
+        "";
+
+      if (
+        !answerKeyText &&
+        submission.answer_key
+      ) {
+        answerKeyText =
+          await extractTextFromStorage(
+            BUCKETS.keys,
+            submission.answer_key,
+            submission.answer_key
+          );
+      }
+
+      if (
+        !answerKeyText ||
+        answerKeyText.trim()
+          .length < 10
+      ) {
+        return res.status(
+          400
+        ).json({
+          error:
+            "Answer key could not be read.",
+        });
+      }
+
+      const totalMarks =
+        Number(
+          submission.total_marks
+        ) || 100;
+
+      const aiResult =
+        await gradeWithAI(
+          submission.assignment_title ||
+            "Assignment",
+          answerKeyText,
+          studentAnswer,
+          totalMarks
+        );
+
+      if (!aiResult) {
+        return res.status(
+          500
+        ).json({
+          error:
+            "AI grading failed.",
+          reviewRequired:
+            true,
+        });
+      }
+
+      let feedback =
+        aiResult.feedback ||
+        "";
+
+      const questions =
+        Array.isArray(
+          aiResult.questions
+        )
+          ? aiResult.questions
+          : [];
+
+      if (questions.length) {
+        feedback +=
+          "\n\nQUESTION-WISE EVALUATION:\n";
+
+        for (
+          const question
+          of questions
+        ) {
+          feedback +=
+            `Q${question.question}: ` +
+            `${question.marks} marks - ` +
+            `${question.status}. ` +
+            `${question.feedback}\n`;
+        }
+      }
+
+      const marks =
+        Math.max(
+          0,
+          Math.min(
+            totalMarks,
+            Number(
+              aiResult.marks ??
+                aiResult.marksObtained ??
+                0
+            )
+          )
+        );
+
+      await db.query(
+        `
+        UPDATE submissions
+        SET
+          auto_marks = $1,
+          final_marks = $1,
+          auto_feedback = $2,
+          graded = 1
+        WHERE id = $3
+        `,
+        [
+          marks,
+          feedback,
+          req.params.id,
+        ]
+      );
+
+      return res.json({
+        success: true,
+
+        submissionId:
+          req.params.id,
+
+        marks,
+
+        totalMarks,
+
+        reviewRequired:
+          Boolean(
+            aiResult.reviewRequired
+          ),
+
+        questions,
+
+        feedback,
+      });
+    } catch (err) {
+      console.error(
+        "AI SINGLE GRADE ERROR:",
+        err.message
+      );
+
+      return res.status(
+        500
+      ).json({
+        error:
+          "Could not grade submission using AI.",
+        reviewRequired:
+          true,
+      });
+    }
+  }
+);
+// ============================================================
+// AUTO CORRECTION
+// ============================================================
+
+router.post(
+  "/assignments/:id/auto-correct",
+  async (req, res) => {
+    try {
+      const assignmentId =
+        req.params.id;
+
+      const assignmentResult =
+        await db.query(
+          `
+          SELECT *
+          FROM assignments
+          WHERE id = $1
+            AND faculty_id = $2
+          `,
+          [
+            assignmentId,
+            req.user.id,
+          ]
+        );
+
+      if (
+        !assignmentResult.rows.length
+      ) {
+        return res.status(
+          404
+        ).json({
+          success: false,
+          error:
+            "Assignment not found.",
+        });
+      }
+
+      const assignment =
+        assignmentResult.rows[0];
+
+      // --------------------------------------------------------
+      // GET ANSWER KEY
+      // --------------------------------------------------------
+
+      let answerKeyText =
+        assignment.answer_key_text ||
+        "";
+
+      if (
+        !answerKeyText &&
+        assignment.answer_key
+      ) {
+        try {
+          answerKeyText =
+            await extractTextFromStorage(
+              BUCKETS.keys,
+              assignment.answer_key,
+              assignment.answer_key
+            );
+        } catch (error) {
+          console.error(
+            "ANSWER KEY EXTRACTION ERROR:",
+            error.message
+          );
+        }
+      }
+
+      if (
+        !answerKeyText ||
+        answerKeyText.trim().length < 10
+      ) {
+        return res.status(
+          400
+        ).json({
+          success: false,
+          error:
+            "Unable to read the answer key. Please upload a readable answer key.",
+        });
+      }
+
+      // --------------------------------------------------------
+      // GET ALL SUBMISSIONS
+      // --------------------------------------------------------
+
+      const submissionsResult =
+        await db.query(
+          `
+          SELECT
+            s.*,
+            u.name AS student_name,
+            u.username AS student_username,
+            u.email AS student_email
+          FROM submissions s
+          JOIN users u
+            ON u.id = s.student_id
+          WHERE s.assignment_id = $1
+          ORDER BY s.id ASC
+          `,
+          [
+            assignmentId,
+          ]
+        );
+
+      const submissions =
+        submissionsResult.rows;
+
+      if (!submissions.length) {
+        return res.status(
+          404
+        ).json({
+          success: false,
+          error:
+            "No student submissions found.",
+        });
+      }
+
+      const totalMarks =
+        Number(
+          assignment.total_marks
+        ) || 100;
+
+      const matchThreshold =
+        Number(
+          req.body?.matchThreshold
+        ) || 70;
+
+      // --------------------------------------------------------
+      // EXTRACT ALL SUBMISSIONS FIRST
+      // --------------------------------------------------------
+
+      const extracted =
+        [];
+
+      for (
+        const submission
+        of submissions
+      ) {
+        let answerText =
+          "";
+
+        try {
+          if (
+            submission.file_path
+          ) {
+            const downloaded =
+              await downloadSubmissionFile(
+                submission.file_path
+              );
+
+            answerText =
+              await extractTextFromBuffer(
+                downloaded.buffer,
+                submission.file_name ||
+                  downloaded.storagePath
+              );
+          }
+        } catch (error) {
+          console.error(
+            `SUBMISSION ${submission.id} OCR ERROR:`,
+            error.message
+          );
+        }
+
+        extracted.push({
+          submission,
+          answerText:
+            answerText || "",
+        });
+      }
+
+      const results = [];
+
+      // --------------------------------------------------------
+      // PROCESS EACH SUBMISSION
+      // --------------------------------------------------------
+
+      for (
+        let i = 0;
+        i < extracted.length;
+        i++
+      ) {
+        const current =
+          extracted[i];
+
+        let duplicateSimilarity =
+          0;
+
+        let matchedWith =
+          null;
+
+        // ------------------------------------------------------
+        // DUPLICATE DETECTION
+        // ------------------------------------------------------
+
+        if (
+          current.answerText &&
+          current.answerText.trim()
+            .length >= 20
+        ) {
+          for (
+            let j = 0;
+            j < extracted.length;
+            j++
+          ) {
+            if (
+              i === j
+            ) {
+              continue;
+            }
+
+            const other =
+              extracted[j];
+
+            if (
+              !other.answerText ||
+              other.answerText
+                .trim()
+                .length < 20
+            ) {
+              continue;
+            }
+
+            const similarity =
+              calculateSimilarity(
+                current.answerText,
+                other.answerText
+              );
+
+            if (
+              similarity >
+              duplicateSimilarity
+            ) {
+              duplicateSimilarity =
+                similarity;
+
+              matchedWith =
+                other.submission;
+            }
+          }
+        }
+
+        const duplicateFlag =
+          duplicateSimilarity >=
+          matchThreshold;
+
+        // ------------------------------------------------------
+        // AI GRADING
+        // ------------------------------------------------------
+
+        let aiResult =
+          null;
+
+        if (
+          current.answerText &&
+          current.answerText
+            .trim()
+            .length >= 20
+        ) {
+          try {
+            aiResult =
+              await gradeWithAI(
+                assignment.title ||
+                  "Assignment",
+                answerKeyText,
+                current.answerText,
+                totalMarks
+              );
+          } catch (error) {
+            console.error(
+              `AI GRADING ERROR FOR SUBMISSION ${current.submission.id}:`,
+              error.message
+            );
+          }
+        }
+
+        // ------------------------------------------------------
+        // MARKS
+        // ------------------------------------------------------
+
+        let marks =
+          Number(
+            aiResult?.marks ??
+              aiResult?.marksObtained ??
+              0
+          );
+
+        if (
+          Number.isNaN(
+            marks
+          )
+        ) {
+          marks = 0;
+        }
+
+        marks =
+          Math.max(
+            0,
+            Math.min(
+              totalMarks,
+              marks
+            )
+          );
+
+        // ------------------------------------------------------
+        // QUESTION RESULTS
+        // ------------------------------------------------------
+
+        const questionResults =
+          Array.isArray(
+            aiResult?.questions
+          )
+            ? aiResult.questions
+            : [];
+
+        // ------------------------------------------------------
+        // REVIEW CONDITIONS
+        // ------------------------------------------------------
+
+        const unreadable =
+          !current.answerText ||
+          current.answerText
+            .trim()
+            .length < 20;
+
+        const aiReview =
+          Boolean(
+            aiResult?.reviewRequired
+          );
+
+        const reviewRequired =
+          unreadable ||
+          aiReview ||
+          duplicateFlag;
+
+        // ------------------------------------------------------
+        // FEEDBACK
+        // ------------------------------------------------------
+
+        let feedback =
+          aiResult?.feedback ||
+          "";
+
+        if (
+          questionResults.length
+        ) {
+          feedback +=
+            "\n\nQUESTION-WISE EVALUATION:\n";
+
+          for (
+            const question
+            of questionResults
+          ) {
+            feedback +=
+              `Q${question.question}: ` +
+              `${question.marks} marks - ` +
+              `${question.status}. ` +
+              `${question.feedback}\n`;
+          }
+        }
+
+        if (
+          unreadable
+        ) {
+          feedback +=
+            "\n\nMANUAL REVIEW REQUIRED: " +
+            "The submission could not be reliably read.";
+        }
+
+        if (
+          aiReview
+        ) {
+          feedback +=
+            "\n\nMANUAL REVIEW REQUIRED: " +
+            "AI grading marked this submission for faculty review.";
+        }
+
+        if (
+          duplicateFlag
+        ) {
+          feedback +=
+            `\n\nDUPLICATE REVIEW FLAG: ` +
+            `${duplicateSimilarity.toFixed(
+              2
+            )}% similarity detected with another submission. ` +
+            `Faculty review is required.`;
+        }
+
+        // ------------------------------------------------------
+        // SAVE RESULT
+        // ------------------------------------------------------
+
+        await db.query(
+          `
+          UPDATE submissions
+          SET
+            similarity_pct = $1,
+            duplicate_flag = $2,
+            final_marks = $3,
+            auto_marks = $4,
+            auto_feedback = $5,
+            graded = 1,
+            posted = 0
+          WHERE id = $6
+          `,
+          [
+            duplicateSimilarity,
+            duplicateFlag
+              ? 1
+              : 0,
+            marks,
+            marks,
+            feedback,
+            current.submission.id,
+          ]
+        );
+
+        results.push({
+          submissionId:
+            current.submission.id,
+
+          studentId:
+            current.submission.student_id,
+
+          studentName:
+            current.submission.student_name ||
+            current.submission.student_username ||
+            "Student",
+
+          marks,
+
+          totalMarks,
+
+          percentage:
+            totalMarks > 0
+              ? Number(
+                  (
+                    (marks /
+                      totalMarks) *
+                    100
+                  ).toFixed(2)
+                )
+              : 0,
+
+          reviewRequired,
+
+          duplicateFlag,
+
+          duplicateSimilarity:
+            Number(
+              duplicateSimilarity.toFixed(
+                2
+              )
+            ),
+
+          matchedWith:
+            matchedWith
+              ? {
+                  submissionId:
+                    matchedWith.id,
+
+                  studentName:
+                    matchedWith.student_name ||
+                    matchedWith.student_username ||
+                    "Student",
+                }
+              : null,
+
+          questionResults,
+
+          feedback,
+        });
+      }
+
+      // --------------------------------------------------------
+      // RESPONSE
+      // --------------------------------------------------------
+
+      return res.json({
+        success: true,
+
+        message:
+          "AI grading, OCR and duplicate detection completed successfully.",
+
+        assignmentId,
+
+        assignmentTitle:
+          assignment.title,
+
+        totalMarks,
+
+        totalSubmissions:
+          submissions.length,
+
+        reviewedSubmissions:
+          results.filter(
+            (item) =>
+              item.reviewRequired
+          ).length,
+
+        duplicateSubmissions:
+          results.filter(
+            (item) =>
+              item.duplicateFlag
+          ).length,
+
+        results,
+      });
+    } catch (error) {
+      console.error(
+        "AUTO CORRECTION ERROR:",
+        error
+      );
+
+      return res.status(
+        500
+      ).json({
+        success: false,
+        error:
+          "Auto-correction failed.",
+        details:
+          process.env.NODE_ENV ===
+          "development"
+            ? error.message
+            : undefined,
+      });
+    }
+  }
+);
+
+
+// ============================================================
+// CHECK DUPLICATE SUBMISSIONS ONLY
+// ============================================================
+
+router.get(
+  "/assignments/:id/duplicates",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      const assignmentResult =
+        await db.query(
+          `
+          SELECT id
+          FROM assignments
+          WHERE id = $1
+            AND faculty_id = $2
+          `,
+          [
+            req.params.id,
+            req.user.id,
+          ]
+        );
+
+      if (
+        !assignmentResult.rows.length
+      ) {
+        return res.status(
+          404
+        ).json({
+          error:
+            "Assignment not found.",
+        });
+      }
+
+      const submissionsResult =
+        await db.query(
+          `
+          SELECT
+            s.*,
+            u.name AS student_name,
+            u.username AS student_username
+          FROM submissions s
+          JOIN users u
+            ON u.id = s.student_id
+          WHERE s.assignment_id = $1
+          ORDER BY s.id ASC
+          `,
+          [
+            req.params.id,
+          ]
+        );
+
+      const submissions =
+        submissionsResult.rows;
+
+      const extracted =
+        [];
+
+      for (
+        const submission
+        of submissions
+      ) {
+        let text = "";
+
+        try {
+          if (
+            submission.file_path
+          ) {
+            const downloaded =
+              await downloadSubmissionFile(
+                submission.file_path
+              );
+
+            text =
+              await extractTextFromBuffer(
+                downloaded.buffer,
+                submission.file_name ||
+                  downloaded.storagePath
+              );
+          }
+        } catch {}
+
+        extracted.push({
+          submission,
+          text:
+            text || "",
+        });
+      }
+
+      const threshold =
+        Number(
+          req.query.threshold
+        ) || 70;
+
+      const duplicates =
+        [];
+
+      for (
+        let i = 0;
+        i < extracted.length;
+        i++
+      ) {
+        for (
+          let j = i + 1;
+          j < extracted.length;
+          j++
+        ) {
+          if (
+            !extracted[i].text ||
+            !extracted[j].text
+          ) {
+            continue;
+          }
+
+          const similarity =
+            calculateSimilarity(
+              extracted[i].text,
+              extracted[j].text
+            );
+
+          if (
+            similarity >=
+            threshold
+          ) {
+            duplicates.push({
+              submission1:
+                extracted[i]
+                  .submission
+                  .id,
+
+              student1:
+                extracted[i]
+                  .submission
+                  .student_name ||
+                extracted[i]
+                  .submission
+                  .student_username,
+
+              submission2:
+                extracted[j]
+                  .submission
+                  .id,
+
+              student2:
+                extracted[j]
+                  .submission
+                  .student_name ||
+                extracted[j]
+                  .submission
+                  .student_username,
+
+              similarity,
+            });
+          }
+        }
+      }
+
+      return res.json({
+        success: true,
+
+        threshold,
+
+        count:
+          duplicates.length,
+
+        duplicates,
+      });
+    } catch (error) {
+      console.error(
+        "DUPLICATE CHECK ERROR:",
+        error.message
+      );
+
+      return res.status(
+        500
+      ).json({
+        error:
+          "Could not check duplicate submissions.",
+      });
+    }
+  }
+);
+
+
+// ============================================================
+// GET SUBMISSION FEEDBACK
+// ============================================================
+
+router.get(
+  "/submissions/:id/feedback",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      const result =
+        await db.query(
+          `
+          SELECT
+            s.id,
+            s.auto_marks,
+            s.final_marks,
+            s.auto_feedback,
+            s.similarity_pct,
+            s.duplicate_flag,
+            s.graded,
+            s.posted,
+            a.total_marks,
+            a.title
+          FROM submissions s
+          JOIN assignments a
+            ON a.id = s.assignment_id
+          WHERE s.id = $1
+            AND a.faculty_id = $2
+          `,
+          [
+            req.params.id,
+            req.user.id,
+          ]
+        );
+
+      if (
+        !result.rows.length
+      ) {
+        return res.status(
+          404
+        ).json({
+          error:
+            "Submission not found.",
+        });
+      }
+
+      const row =
+        result.rows[0];
+
+      return res.json({
+        success: true,
+
+        submissionId:
+          row.id,
+
+        marks:
+          row.final_marks ??
+          row.auto_marks ??
+          0,
+
+        autoMarks:
+          row.auto_marks ??
+          0,
+
+        totalMarks:
+          row.total_marks ??
+          0,
+
+        feedback:
+          row.auto_feedback ||
+          "",
+
+        similarity:
+          row.similarity_pct ??
+          0,
+
+        duplicateFlag:
+          Boolean(
+            row.duplicate_flag
+          ),
+
+        graded:
+          Boolean(
+            row.graded
+          ),
+
+        posted:
+          Boolean(
+            row.posted
+          ),
+      });
+    } catch (error) {
+      console.error(
+        "GET FEEDBACK ERROR:",
+        error.message
+      );
+
+      return res.status(
+        500
+      ).json({
+        error:
+          "Could not load feedback.",
+      });
+    }
+  }
+);
+
+
+// ============================================================
+// ASSIGNMENT RESULTS SUMMARY
+// ============================================================
+
+router.get(
+  "/assignments/:id/results",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      const assignmentResult =
+        await db.query(
+          `
+          SELECT *
+          FROM assignments
+          WHERE id = $1
+            AND faculty_id = $2
+          `,
+          [
+            req.params.id,
+            req.user.id,
+          ]
+        );
+
+      if (
+        !assignmentResult.rows.length
+      ) {
+        return res.status(
+          404
+        ).json({
+          error:
+            "Assignment not found.",
+        });
+      }
+
+      const assignment =
+        assignmentResult.rows[0];
+
+      const result =
+        await db.query(
+          `
+          SELECT
+            s.id,
+            s.student_id,
+            u.name AS student_name,
+            u.username,
+            u.email,
+
+            s.final_marks,
+            s.auto_marks,
+            s.auto_feedback,
+
+            s.similarity_pct,
+            s.duplicate_flag,
+
+            s.graded,
+            s.posted,
+
+            s.submitted_at
+
+          FROM submissions s
+
+          JOIN users u
+            ON u.id =
+               s.student_id
+
+          WHERE s.assignment_id = $1
+
+          ORDER BY
+            s.final_marks DESC NULLS LAST,
+            s.id ASC
+          `,
+          [
+            req.params.id,
+          ]
+        );
+
+      const rows =
+        result.rows || [];
+
+      const marks =
+        rows
+          .map(
+            (row) =>
+              Number(
+                row.final_marks ??
+                  row.auto_marks
+              )
+          )
+          .filter(
+            (value) =>
+              !Number.isNaN(
+                value
+              )
+          );
+
+      const average =
+        marks.length
+          ? Number(
+              (
+                marks.reduce(
+                  (
+                    sum,
+                    value
+                  ) =>
+                    sum +
+                    value,
+                  0
+                ) /
+                marks.length
+              ).toFixed(2)
+            )
+          : 0;
+
+      const highest =
+        marks.length
+          ? Math.max(
+              ...marks
+            )
+          : 0;
+
+      const lowest =
+        marks.length
+          ? Math.min(
+              ...marks
+            )
+          : 0;
+
+      return res.json({
+        success: true,
+
+        assignment: {
+          id:
+            assignment.id,
+
+          title:
+            assignment.title,
+
+          totalMarks:
+            Number(
+              assignment.total_marks
+            ) || 0,
+        },
+
+        summary: {
+          totalSubmissions:
+            rows.length,
+
+          graded:
+            rows.filter(
+              (row) =>
+                row.graded
+            ).length,
+
+          posted:
+            rows.filter(
+              (row) =>
+                row.posted
+            ).length,
+
+          duplicates:
+            rows.filter(
+              (row) =>
+                row.duplicate_flag
+            ).length,
+
+          average,
+
+          highest,
+
+          lowest,
+        },
+
+        results:
+          rows,
+      });
+    } catch (error) {
+      console.error(
+        "RESULTS ERROR:",
+        error.message
+      );
+
+      return res.status(
+        500
+      ).json({
+        error:
+          "Could not load assignment results.",
+      });
+    }
+  }
+);
+
+
+// ============================================================
+// STUDENT PERFORMANCE
+// ============================================================
+
+router.get(
+  "/students/:studentId/performance",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      const result =
+        await db.query(
+          `
+          SELECT
+            s.id AS submission_id,
+
+            a.id AS assignment_id,
+            a.title,
+            a.total_marks,
+            a.due_date,
+
+            s.final_marks,
+            s.auto_marks,
+            s.auto_feedback,
+
+            s.graded,
+            s.posted,
+            s.submitted_at
+
+          FROM submissions s
+
+          JOIN assignments a
+            ON a.id =
+               s.assignment_id
+
+          WHERE s.student_id = $1
+            AND a.faculty_id = $2
+
+          ORDER BY
+            a.id DESC
+          `,
+          [
+            req.params.studentId,
+            req.user.id,
+          ]
+        );
+
+      const rows =
+        result.rows || [];
+
+      return res.json({
+        success: true,
+
+        studentId:
+          req.params.studentId,
+
+        submissions:
+          rows,
+      });
+    } catch (error) {
+      console.error(
+        "STUDENT PERFORMANCE ERROR:",
+        error.message
+      );
+
+      return res.status(
+        500
+      ).json({
+        error:
+          "Could not load student performance.",
+      });
+    }
+  }
+);
+
+
+// ============================================================
+// NOTIFICATIONS / PENDING COUNTS
+// ============================================================
+
+router.get(
+  "/notifications",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      const result =
+        await db.query(
+          `
+          SELECT
+            COUNT(*) FILTER (
+              WHERE e.status = 'pending'
+            ) AS pending_students,
+
+            COUNT(*) FILTER (
+              WHERE s.graded = 0
+                 OR s.graded IS NULL
+            ) AS ungraded_submissions
+
+          FROM enrollments e
+
+          LEFT JOIN assignments a
+            ON a.faculty_id =
+               e.faculty_id
+
+          LEFT JOIN submissions s
+            ON s.assignment_id =
+               a.id
+
+          WHERE e.faculty_id = $1
+          `,
+          [
+            req.user.id,
+          ]
+        );
+
+      return res.json({
+        success: true,
+
+        notifications:
+          result.rows[0] || {
+            pending_students:
+              0,
+
+            ungraded_submissions:
+              0,
+          },
+      });
+    } catch (error) {
+      console.error(
+        "NOTIFICATIONS ERROR:",
+        error.message
+      );
+
+      return res.json({
+        success: true,
+
+        notifications: {
+          pending_students:
+            0,
+
+          ungraded_submissions:
+            0,
+        },
+      });
+    }
+  }
+);
+
+
+// ============================================================
+// CHANGE ASSIGNMENT DEADLINE
+// ============================================================
+
+router.patch(
+  "/assignments/:id/deadline",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      const {
+        dueDate,
+      } = req.body;
+
+      if (
+        !dueDate
+      ) {
+        return res.status(
+          400
+        ).json({
+          error:
+            "Due date is required.",
+        });
+      }
+
+      const result =
+        await db.query(
+          `
+          UPDATE assignments
+          SET due_date = $1
+          WHERE id = $2
+            AND faculty_id = $3
+          RETURNING *
+          `,
+          [
+            dueDate,
+            req.params.id,
+            req.user.id,
+          ]
+        );
+
+      if (
+        !result.rows.length
+      ) {
+        return res.status(
+          404
+        ).json({
+          error:
+            "Assignment not found.",
+        });
+      }
+
+      return res.json({
+        success: true,
+
+        assignment:
+          result.rows[0],
+      });
+    } catch (error) {
+      console.error(
+        "DEADLINE UPDATE ERROR:",
+        error.message
+      );
+
+      return res.status(
+        500
+      ).json({
+        error:
+          "Could not update deadline.",
+      });
+    }
+  }
+);
+// ============================================================
+// PART 4 / 4
+// CONTINUATION — KEEP THIS AFTER PART 3
+// ============================================================
+
+
+// ============================================================
+// EXAM MANAGEMENT
+// ============================================================
+
+router.get(
+  "/exams",
+  async (req, res) => {
+    try {
+      const result = await db.query(
+        `
+        SELECT *
+        FROM exams
+        WHERE faculty_id = $1
+        ORDER BY id DESC
+        `,
+        [req.user.id]
+      );
+
+      return res.json(result.rows || []);
+    } catch (err) {
+      console.error(
+        "GET EXAMS ERROR:",
+        err.message
+      );
+
+      return res.status(500).json({
+        error: "Could not fetch exams.",
+      });
+    }
+  }
+);
+
+
+// ============================================================
+// GET SINGLE EXAM
+// ============================================================
+
+router.get(
+  "/exams/:id",
+  async (req, res) => {
+    try {
+      const result = await db.query(
+        `
+        SELECT *
+        FROM exams
+        WHERE id = $1
+          AND faculty_id = $2
+        `,
+        [
+          req.params.id,
+          req.user.id,
+        ]
+      );
+
+      if (!result.rows.length) {
+        return res.status(404).json({
+          error: "Exam not found.",
+        });
+      }
+
+      return res.json(result.rows[0]);
+    } catch (err) {
+      console.error(
+        "GET EXAM ERROR:",
+        err.message
+      );
+
+      return res.status(500).json({
+        error: "Could not fetch exam.",
+      });
+    }
+  }
+);
+
+
+// ============================================================
+// CREATE EXAM
+// ============================================================
+
+router.post(
+  "/exams",
+  async (req, res) => {
+    try {
+      const {
+        title,
+        description,
+        duration,
+        totalMarks,
+        startTime,
+        endTime,
+      } = req.body;
+
+      if (!title) {
+        return res.status(400).json({
+          error: "Exam title is required.",
+        });
+      }
+
+      const result = await db.query(
+        `
+        INSERT INTO exams (
+          faculty_id,
+          title,
+          description,
+          duration,
+          total_marks,
+          start_time,
+          end_time
+        )
+        VALUES (
+          $1,
+          $2,
+          $3,
+          $4,
+          $5,
+          $6,
+          $7
+        )
+        RETURNING *
+        `,
+        [
+          req.user.id,
+          title,
+          description || "",
+          Number(duration) || 0,
+          Number(totalMarks) || 0,
+          startTime || null,
+          endTime || null,
+        ]
+      );
+
+      return res.status(201).json({
+        success: true,
+        exam: result.rows[0],
+      });
+    } catch (err) {
+      console.error(
+        "CREATE EXAM ERROR:",
+        err.message
+      );
+
+      return res.status(500).json({
+        error: "Could not create exam.",
+      });
+    }
+  }
+);
+
+
+// ============================================================
+// UPDATE EXAM
+// ============================================================
+
+router.put(
+  "/exams/:id",
+  async (req, res) => {
+    try {
+      const {
+        title,
+        description,
+        duration,
+        totalMarks,
+        startTime,
+        endTime,
+      } = req.body;
+
+      const result = await db.query(
+        `
+        UPDATE exams
+        SET
+          title = COALESCE($1, title),
+          description = COALESCE($2, description),
+          duration = COALESCE($3, duration),
+          total_marks = COALESCE($4, total_marks),
+          start_time = COALESCE($5, start_time),
+          end_time = COALESCE($6, end_time)
+        WHERE id = $7
+          AND faculty_id = $8
+        RETURNING *
+        `,
+        [
+          title,
+          description,
+          duration !== undefined
+            ? Number(duration)
+            : null,
+          totalMarks !== undefined
+            ? Number(totalMarks)
+            : null,
+          startTime || null,
+          endTime || null,
+          req.params.id,
+          req.user.id,
+        ]
+      );
+
+      if (!result.rows.length) {
+        return res.status(404).json({
+          error: "Exam not found.",
+        });
+      }
+
+      return res.json({
+        success: true,
+        exam: result.rows[0],
+      });
+    } catch (err) {
+      console.error(
+        "UPDATE EXAM ERROR:",
+        err.message
+      );
+
+      return res.status(500).json({
+        error: "Could not update exam.",
+      });
+    }
+  }
+);
+
+
+// ============================================================
+// DELETE EXAM
+// ============================================================
+
+router.delete(
+  "/exams/:id",
+  async (req, res) => {
+    try {
+      const result = await db.query(
+        `
+        DELETE FROM exams
+        WHERE id = $1
+          AND faculty_id = $2
+        RETURNING id
+        `,
+        [
+          req.params.id,
+          req.user.id,
+        ]
+      );
+
+      if (!result.rows.length) {
+        return res.status(404).json({
+          error: "Exam not found.",
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: "Exam deleted successfully.",
+      });
+    } catch (err) {
+      console.error(
+        "DELETE EXAM ERROR:",
+        err.message
+      );
+
+      return res.status(500).json({
+        error: "Could not delete exam.",
+      });
+    }
+  }
+);
+
+
+// ============================================================
+// EXAM ATTEMPTS
+// ============================================================
+
+router.get(
+  "/exams/:id/attempts",
+  async (req, res) => {
+    try {
+      const examResult = await db.query(
+        `
+        SELECT id
+        FROM exams
+        WHERE id = $1
+          AND faculty_id = $2
+        `,
+        [
+          req.params.id,
+          req.user.id,
+        ]
+      );
+
+      if (!examResult.rows.length) {
+        return res.status(404).json({
+          error: "Exam not found.",
+        });
+      }
+
+      const result = await db.query(
+        `
+        SELECT
+          at.*,
+          u.name AS student_name,
+          u.username AS student_username,
+          u.email AS student_email
+        FROM exam_attempts at
+        JOIN users u
+          ON u.id = at.student_id
+        WHERE at.exam_id = $1
+        ORDER BY at.id DESC
+        `,
+        [req.params.id]
+      );
+
+      return res.json(result.rows || []);
+    } catch (err) {
+      console.error(
+        "GET EXAM ATTEMPTS ERROR:",
+        err.message
+      );
+
+      return res.status(500).json({
+        error: "Could not fetch exam attempts.",
+      });
+    }
+  }
+);
+
+
+// ============================================================
+// SINGLE EXAM ATTEMPT
+// ============================================================
+
+router.get(
+  "/exam-attempts/:id",
+  async (req, res) => {
+    try {
+      const result = await db.query(
+        `
+        SELECT
+          at.*,
+          ex.title AS exam_title,
+          ex.total_marks,
+          ex.faculty_id,
+          u.name AS student_name,
+          u.username AS student_username
+        FROM exam_attempts at
+        JOIN exams ex
+          ON ex.id = at.exam_id
+        JOIN users u
+          ON u.id = at.student_id
+        WHERE at.id = $1
+          AND ex.faculty_id = $2
+        `,
+        [
+          req.params.id,
+          req.user.id,
+        ]
+      );
+
+      if (!result.rows.length) {
+        return res.status(404).json({
+          error: "Exam attempt not found.",
+        });
+      }
+
+      return res.json(result.rows[0]);
+    } catch (err) {
+      console.error(
+        "GET EXAM ATTEMPT ERROR:",
+        err.message
+      );
+
+      return res.status(500).json({
+        error: "Could not fetch exam attempt.",
+      });
+    }
+  }
+);
+
+
+// ============================================================
+// GRADE EXAM ATTEMPT
+// ============================================================
+
+router.put(
+  "/exam-attempts/:id/grade",
+  async (req, res) => {
+    try {
+      const result = await db.query(
+        `
+        SELECT
+          at.*,
+          ex.total_marks,
+          ex.faculty_id
+        FROM exam_attempts at
+        JOIN exams ex
+          ON ex.id = at.exam_id
+        WHERE at.id = $1
+          AND ex.faculty_id = $2
+        `,
+        [
+          req.params.id,
+          req.user.id,
+        ]
+      );
+
+      const attempt = result.rows[0];
+
+      if (!attempt) {
+        return res.status(404).json({
+          error: "Exam attempt not found.",
+        });
+      }
+
+      const requestedMarks =
+        Number(req.body.marks);
+
+      if (Number.isNaN(requestedMarks)) {
+        return res.status(400).json({
+          error: "Marks must be a valid number.",
+        });
+      }
+
+      const totalMarks =
+        Number(attempt.total_marks) || 100;
+
+      const score = Math.max(
+        0,
+        Math.min(
+          totalMarks,
+          requestedMarks
+        )
+      );
+
+      await db.query(
+        `
+        UPDATE exam_attempts
+        SET
+          score = $1,
+          feedback = $2,
+          graded = 1
+        WHERE id = $3
+        `,
+        [
+          score,
+          req.body.feedback || "",
+          req.params.id,
+        ]
+      );
+
+      return res.json({
+        success: true,
+        score,
+        totalMarks,
+      });
+    } catch (err) {
+      console.error(
+        "GRADE EXAM ATTEMPT ERROR:",
+        err.message
+      );
+
+      return res.status(500).json({
+        error: "Could not grade exam attempt.",
+      });
+    }
+  }
+);
+
 
 // ============================================================
 // POST EXAM RESULT
@@ -2817,60 +4351,38 @@ router.put(
 
 router.post(
   "/exam-attempts/:id/post",
-  async (
-    req,
-    res
-  ) => {
+  async (req, res) => {
     try {
-      const result =
-        await db.query(
-          `
-          SELECT
-            at.*,
-            ex.faculty_id
+      const result = await db.query(
+        `
+        SELECT
+          at.*,
+          ex.faculty_id
+        FROM exam_attempts at
+        JOIN exams ex
+          ON ex.id = at.exam_id
+        WHERE at.id = $1
+        `,
+        [req.params.id]
+      );
 
-          FROM exam_attempts at
-
-          JOIN exams ex
-            ON ex.id =
-               at.exam_id
-
-          WHERE at.id = $1
-          `,
-          [
-            req.params.id,
-          ]
-        );
-
-      const attempt =
-        result.rows[0];
+      const attempt = result.rows[0];
 
       if (
         !attempt ||
-        Number(
-          attempt.faculty_id
-        ) !==
-          Number(
-            req.user.id
-          )
+        Number(attempt.faculty_id) !==
+          Number(req.user.id)
       ) {
-        return res.status(
-          404
-        ).json({
-          error:
-            "Attempt not found.",
+        return res.status(404).json({
+          error: "Attempt not found.",
         });
       }
 
       if (
-        attempt.score ===
-          null ||
-        attempt.score ===
-          undefined
+        attempt.score === null ||
+        attempt.score === undefined
       ) {
-        return res.status(
-          400
-        ).json({
+        return res.status(400).json({
           error:
             "Score the attempt before posting.",
         });
@@ -2879,21 +4391,15 @@ router.post(
       await db.query(
         `
         UPDATE exam_attempts
-
         SET
-          posted =
-            1::smallint
-
+          posted = 1
         WHERE id = $1
         `,
-        [
-          attempt.id,
-        ]
+        [attempt.id]
       );
 
       return res.json({
         success: true,
-
         message:
           "Result posted to student.",
       });
@@ -2903,15 +4409,14 @@ router.post(
         err.message
       );
 
-      return res.status(
-        500
-      ).json({
+      return res.status(500).json({
         error:
           "Could not post exam result.",
       });
     }
   }
 );
+
 
 // ============================================================
 // EXPORT
