@@ -1511,12 +1511,10 @@ router.post(
       // --------------------------------------------------------
 
       let answerKeyText =
-        String(
-          req.body.answerKeyText ||
-          req.body.answer_key_text ||
-          req.body.keyText ||
-          ""
-        ).trim();
+  String(
+    assignment.answer_key ||
+    ""
+  ).trim();
 
       // --------------------------------------------------------
       // OPTIONAL FILE
@@ -4072,19 +4070,19 @@ router.patch(
 
       const result =
         await db.query(
-          `
-          UPDATE assignments
-          SET due_date = $1
-          WHERE id = $2
-            AND faculty_id = $3
-          RETURNING *
-          `,
-          [
-            dueDate,
-            req.params.id,
-            req.user.id,
-          ]
-        );
+  `
+  UPDATE assignments
+  SET
+    answer_key = $1
+  WHERE id = $2
+    AND faculty_id = $3
+  `,
+  [
+    answerKeyText,
+    assignmentId,
+    req.user.id,
+  ]
+);
 
       if (
         !result.rows.length
