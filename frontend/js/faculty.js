@@ -580,16 +580,41 @@
 
   async function openAssignment(id) {
     try {
-      const response =
-        await api(
-          `/api/faculty/assignments/${id}/submissions`
-        );
+    const response =
+  await api(
+    `/api/faculty/assignments/${encodeURIComponent(id)}/submissions`
+  );
 
-      const a =
-        response.assignment;
+// Support both:
+// { assignment: {...}, submissions: [...] }
+// and:
+// { data: { assignment: {...}, submissions: [...] } }
 
-      const submissions =
-        response.submissions || [];
+const payload =
+  response && response.data
+    ? response.data
+    : response || {};
+
+const a =
+  payload.assignment ||
+  payload.assignmentData ||
+  null;
+
+const submissions =
+  Array.isArray(payload.submissions)
+    ? payload.submissions
+    : [];
+
+if (!a || !a.id) {
+  console.error(
+    "OPEN ASSIGNMENT: Invalid API response",
+    response
+  );
+
+  throw new Error(
+    "Assignment data was not returned by the server."
+  );
+}
 
       if ($("assignmentDetailWrap")) {
         $("assignmentDetailWrap")
