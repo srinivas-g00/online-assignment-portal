@@ -1500,116 +1500,155 @@ router.post(
         });
       }
 
-      if (!req.file) {
-        return res.status(
-          400
-        ).json({
-          error:
-            "Answer key file is required.",
-        });
-      }
+      // --------------------------------------------------------
+      // GET ANSWER KEY TEXT
+      // --------------------------------------------------------
+      //
+      // The faculty can paste the answer key directly.
+      // We do NOT OCR the answer key.
+      //
+      // Accept the possible field names used by the frontend.
+      // --------------------------------------------------------
+
+      let answerKeyText =
+        String(
+          req.body.answerKeyText ||
+          req.body.answer_key_text ||
+          req.body.keyText ||
+          ""
+        ).trim();
+
+      // --------------------------------------------------------
+      // OPTIONAL FILE
+      // --------------------------------------------------------
+      //
+      // A file can still be uploaded and stored, but it is NOT
+      // used for OCR/grading. The text answer key is authoritative.
+      // --------------------------------------------------------
 
       let answerKeyPath =
         null;
 
-      try {
-        const uploaded =
-          await uploadToSupabase(
-            req.file,
-            BUCKETS.keys
+      if (req.file) {
+        try {
+          const uploaded =
+            await uploadToSupabase(
+              req.file,
+              BUCKETS.keys
+            );
+
+          answerKeyPath =
+            uploaded.path;
+        } catch (uploadError) {
+          console.warn(
+            "Answer key Supabase upload failed. Using local storage:",
+            uploadError.message
           );
 
-        answerKeyPath =
-          uploaded.path;
-      } catch (uploadError) {
-        console.warn(
-          "Answer key Supabase upload failed. Using local storage:",
-          uploadError.message
-        );
+          const safeName =
+            `${Date.now()}-${req.file.originalname}`;
 
-        const safeName =
-          `${Date.now()}-${req.file.originalname}`;
+          const destDir =
+            path.join(
+              __dirname,
+              "..",
+              "uploads",
+              "keys"
+            );
 
-        const destDir =
-          path.join(
-            __dirname,
-            "..",
-            "uploads",
-            "keys"
+          if (
+            !fs.existsSync(
+              destDir
+            )
+          ) {
+            fs.mkdirSync(
+              destDir,
+              {
+                recursive: true,
+              }
+            );
+          }
+
+          const localPath =
+            path.join(
+              destDir,
+              safeName
+            );
+
+          fs.writeFileSync(
+            localPath,
+            req.file.buffer
           );
 
-        if (
-          !fs.existsSync(
-            destDir
-          )
-        ) {
-          fs.mkdirSync(
-            destDir,
-            {
-              recursive: true,
-            }
-          );
+          answerKeyPath =
+            safeName;
         }
-
-        const localPath =
-          path.join(
-            destDir,
-            safeName
-          );
-
-        fs.writeFileSync(
-          localPath,
-          req.file.buffer
-        );
-
-        answerKeyPath =
-          safeName;
       }
 
-      let answerKeyText = "";
+      // --------------------------------------------------------
+      // REQUIRE TEXT ANSWER KEY
+      // --------------------------------------------------------
 
-      try {
-        answerKeyText =
-          await extractTextFromBuffer(
-            req.file.buffer,
-            req.file.originalname
-          );
-      } catch (error) {
-        console.warn(
-          "Answer key OCR failed:",
-          error.message
-        );
+      if (
+        !answerKeyText
+      ) {
+        return res.status(
+          400
+        ).json({
+          error:
+            "Answer key text is required. Please paste the answer key.",
+        });
       }
+
+      // --------------------------------------------------------
+      // SAVE ANSWER KEY TEXT
+      // --------------------------------------------------------
+      //
+      // answer_key_text = actual reference answer
+      //
+      // answer_key = optional stored file path
+      //
+      // The AI auto-correction route reads answer_key_text.
+      // --------------------------------------------------------
 
       await db.query(
         `
         UPDATE assignments
         SET
-          answer_key = $1,
-          answer_key_text = $2
+          answer_key_text = $1,
+          answer_key = COALESCE(
+            $2,
+            answer_key
+          )
         WHERE id = $3
           AND faculty_id = $4
         `,
         [
+          answerKeyText,
           answerKeyPath,
-          answerKeyText || "",
           assignmentId,
           req.user.id,
         ]
       );
 
+      console.log(
+        `[ANSWER KEY] Text saved for assignment ${assignmentId}. Length: ${answerKeyText.length}`
+      );
+
       return res.json({
         success: true,
+
         message:
-          "Answer key uploaded successfully.",
-        answerKey:
-          answerKeyPath,
-        extractedTextLength:
+          "Answer key text saved successfully.",
+
+        assignmentId,
+
+        answerKeyTextLength:
           answerKeyText.length,
       });
     } catch (err) {
       console.error(
-        "ANSWER KEY UPLOAD ERROR:",
+        "ANSWER KEY SAVE ERROR:",
         err.message
       );
 
@@ -1617,7 +1656,9 @@ router.post(
         500
       ).json({
         error:
-          "Could not upload answer key.",
+          "Could not save answer key.",
+        details:
+          err.message,
       });
     }
   }
