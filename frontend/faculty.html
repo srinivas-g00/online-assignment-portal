@@ -1,13 +1,408 @@
-<!doctype html>
+
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Faculty Dashboard - Online Assignment Portal</title>
+  <meta name="theme-color" content="#0f172a">
+
+  <title>Faculty Dashboard | Online Assignment Portal</title>
+
   <link rel="stylesheet" href="css/style.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>👨‍🏫</text></svg>">
+
+  <link
+    rel="icon"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%91%A8%26%23127979%3B%3C/text%3E%3C/svg%3E"
+  >
+
+  <style>
+    body {
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 5% 0%, rgba(99, 102, 241, .09), transparent 30%),
+        radial-gradient(circle at 95% 5%, rgba(6, 182, 212, .07), transparent 28%),
+        #f5f7fc;
+    }
+
+    .top {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      background: rgba(255, 255, 255, .94);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid #e8edf5;
+      box-shadow: 0 4px 20px rgba(15, 23, 42, .04);
+    }
+
+    .top .brand {
+      max-width: 1240px;
+      margin: auto;
+      padding: 14px 24px;
+    }
+
+    .brand-left {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+    }
+
+    .logo {
+      display: grid;
+      place-items: center;
+      width: 44px;
+      height: 44px;
+      border-radius: 13px;
+      background: linear-gradient(135deg, #4f46e5, #2563eb);
+      color: white;
+      font-size: 17px;
+      font-weight: 850;
+      box-shadow: 0 6px 15px rgba(79, 70, 229, .24);
+    }
+
+    .brand-left h1 {
+      margin: 0;
+      color: #111827;
+      font-size: 17px;
+      font-weight: 800;
+      letter-spacing: -.3px;
+    }
+
+    .brand-left small {
+      display: block;
+      margin-top: 3px;
+      color: #64748b;
+      font-size: 12px;
+    }
+
+    .top-actions .btn {
+      border-radius: 10px;
+      font-weight: 700;
+    }
+
+    .main {
+      width: min(100% - 40px, 1200px);
+      margin: 30px auto 60px;
+    }
+
+    .bar {
+      position: relative;
+      overflow: hidden;
+      padding: 25px 28px;
+      border: 1px solid #e0e7ff;
+      border-radius: 20px;
+      background: linear-gradient(120deg, #eef2ff, #f8faff 65%, #ecfeff);
+      box-shadow: 0 10px 30px rgba(15, 23, 42, .045);
+    }
+
+    .bar::after {
+      content: "";
+      position: absolute;
+      width: 190px;
+      height: 190px;
+      right: -65px;
+      top: -95px;
+      border: 28px solid rgba(99, 102, 241, .055);
+      border-radius: 50%;
+      pointer-events: none;
+    }
+
+    .who {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .avatar {
+      display: grid;
+      place-items: center;
+      width: 58px;
+      height: 58px;
+      flex-shrink: 0;
+      border: 3px solid rgba(255, 255, 255, .9);
+      border-radius: 17px;
+      background: linear-gradient(135deg, #4f46e5, #0891b2);
+      color: white;
+      font-size: 23px;
+      font-weight: 800;
+      box-shadow: 0 7px 18px rgba(79, 70, 229, .2);
+    }
+
+    #facName {
+      display: block;
+      color: #172554;
+      font-size: 19px;
+      font-weight: 800;
+    }
+
+    #facSubject {
+      display: block;
+      margin-top: 5px;
+      color: #64748b;
+      font-size: 13px;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 7px;
+      margin: 24px 0;
+      padding: 7px;
+      overflow-x: auto;
+      border: 1px solid #e5eaf2;
+      border-radius: 14px;
+      background: white;
+      box-shadow: 0 5px 18px rgba(15, 23, 42, .035);
+      scrollbar-width: thin;
+    }
+
+    .tabs button {
+      flex: 1 0 auto;
+      min-height: 42px;
+      padding: 10px 17px;
+      border: 0;
+      border-radius: 9px;
+      background: transparent;
+      color: #64748b;
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
+      cursor: pointer;
+      transition: background .2s ease, color .2s ease;
+    }
+
+    .tabs button:hover {
+      background: #f1f5f9;
+      color: #3730a3;
+    }
+
+    .tabs button.active {
+      background: linear-gradient(135deg, #4f46e5, #4338ca);
+      color: white;
+      box-shadow: 0 5px 12px rgba(79, 70, 229, .2);
+    }
+
+    .panel {
+      overflow: hidden;
+      margin-bottom: 20px;
+      border: 1px solid #e5eaf2;
+      border-radius: 17px;
+      background: #fff;
+      box-shadow: 0 8px 25px rgba(15, 23, 42, .045);
+    }
+
+    .panel > h3 {
+      margin: 0;
+      padding: 20px 23px;
+      border-bottom: 1px solid #edf0f5;
+      background: #fff;
+      color: #172554;
+      font-size: 16px;
+      font-weight: 800;
+    }
+
+    .panel-body {
+      padding: 23px;
+    }
+
+    .field {
+      margin-bottom: 19px;
+    }
+
+    .field label {
+      display: block;
+      margin-bottom: 8px;
+      color: #334155;
+      font-size: 13px;
+      font-weight: 750;
+    }
+
+    .field input,
+    .field textarea,
+    .field select {
+      width: 100%;
+      min-height: 45px;
+      padding: 11px 13px;
+      border: 1px solid #dce3ee;
+      border-radius: 10px;
+      background: #fbfcff;
+      color: #172033;
+      font: inherit;
+      font-size: 14px;
+      transition: border-color .2s ease, box-shadow .2s ease;
+    }
+
+    .field textarea {
+      min-height: 100px;
+      resize: vertical;
+    }
+
+    .field input:focus,
+    .field textarea:focus,
+    .field select:focus {
+      outline: none;
+      border-color: #818cf8;
+      background: white;
+      box-shadow: 0 0 0 4px rgba(99, 102, 241, .11);
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .panel .btn,
+    .row-buttons .btn {
+      min-height: 43px;
+      padding: 11px 19px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 750;
+      transition: transform .2s ease, box-shadow .2s ease;
+    }
+
+    .panel .btn:not(.secondary):hover,
+    .row-buttons .btn:not(.secondary):hover {
+      transform: translateY(-1px);
+      box-shadow: 0 7px 15px rgba(79, 70, 229, .17);
+    }
+
+    .row-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 11px;
+      align-items: center;
+    }
+
+    #assignmentDetailWrap,
+    #examResultsWrap {
+      margin-top: 20px !important;
+    }
+
+    #requestsList,
+    #assignmentsList,
+    #examsList {
+      min-width: 0;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    button:focus-visible,
+    input:focus-visible,
+    textarea:focus-visible,
+    select:focus-visible {
+      outline: 3px solid rgba(99, 102, 241, .25);
+      outline-offset: 2px;
+    }
+
+    @media (max-width: 700px) {
+      .top .brand {
+        padding: 12px 16px;
+      }
+
+      .brand-left h1 {
+        font-size: 14px;
+      }
+
+      .logo {
+        width: 40px;
+        height: 40px;
+      }
+
+      .main {
+        width: calc(100% - 24px);
+        margin-top: 18px;
+      }
+
+      .bar {
+        padding: 19px;
+        border-radius: 15px;
+      }
+
+      .tabs {
+        margin: 17px 0;
+      }
+
+      .tabs button {
+        padding: 10px 14px;
+      }
+
+      .panel {
+        border-radius: 14px;
+      }
+
+      .panel > h3 {
+        padding: 17px;
+      }
+
+      .panel-body {
+        padding: 17px;
+      }
+
+      .two-col {
+        grid-template-columns: 1fr;
+        gap: 0;
+      }
+    }
+
+    @media (max-width: 420px) {
+      .top .brand {
+        padding: 11px;
+      }
+
+      .brand-left {
+        gap: 9px;
+      }
+
+      .brand-left h1 {
+        font-size: 12px;
+      }
+
+      .brand-left small {
+        font-size: 10px;
+      }
+
+      .top-actions .btn {
+        padding: 8px 10px;
+        font-size: 11px;
+      }
+
+      .avatar {
+        width: 49px;
+        height: 49px;
+      }
+
+      #facName {
+        font-size: 16px;
+      }
+
+      .row-buttons {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .row-buttons .btn {
+        width: 100%;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        animation-duration: .01ms !important;
+        transition-duration: .01ms !important;
+      }
+    }
+  </style>
 </head>
+
 <body>
+
   <!-- Header / Navigation Bar -->
   <header class="top">
     <div class="brand">
@@ -18,14 +413,18 @@
           <small>Faculty Dashboard</small>
         </div>
       </div>
+
       <div class="top-actions">
-        <button class="btn secondary" onclick="logout()" type="button">Log out</button>
+        <button class="btn secondary" onclick="logout()" type="button">
+          Log out
+        </button>
       </div>
     </div>
   </header>
 
   <!-- Main Container -->
   <main class="main">
+
     <!-- Faculty Profile Banner -->
     <section class="bar">
       <div class="who">
@@ -39,11 +438,25 @@
 
     <!-- Navigation Tabs -->
     <nav class="tabs" aria-label="Faculty Navigation Tabs">
-      <button class="active" data-tab="requests" type="button">Student Requests</button>
-      <button data-tab="assignments" type="button">Assignments</button>
-      <button data-tab="newAssignment" type="button">Post Assignment</button>
-      <button data-tab="exams" type="button">Exams</button>
-      <button data-tab="newExam" type="button">Create Exam</button>
+      <button class="active" data-tab="requests" type="button">
+        Student Requests
+      </button>
+
+      <button data-tab="assignments" type="button">
+        Assignments
+      </button>
+
+      <button data-tab="newAssignment" type="button">
+        Post Assignment
+      </button>
+
+      <button data-tab="exams" type="button">
+        Exams
+      </button>
+
+      <button data-tab="newExam" type="button">
+        Create Exam
+      </button>
     </nav>
 
     <!-- Tab 1: Pending Student Requests -->
@@ -62,7 +475,8 @@
         <h3>My Assignments</h3>
         <div class="panel-body" id="assignmentsList"></div>
       </div>
-      <div id="assignmentDetailWrap" class="hidden" style="margin-top: 16px;">
+
+      <div id="assignmentDetailWrap" class="hidden">
         <div class="panel">
           <div class="panel-body" id="assignmentDetail"></div>
         </div>
@@ -73,36 +487,62 @@
     <section id="tab-newAssignment" class="hidden">
       <div class="panel">
         <h3>Post a New Assignment</h3>
+
         <div class="panel-body">
+
           <div class="two-col">
             <div class="field">
-              <label for="newTitle">Title</label>
-              <input id="newTitle" type="text" placeholder="e.g. Design Pattern Implementation">
+              <label for="newTitle">Assignment Title</label>
+              <input
+                id="newTitle"
+                type="text"
+                placeholder="e.g. Design Pattern Implementation"
+              >
             </div>
+
             <div class="field">
               <label for="newTotalMarks">Total Marks</label>
-              <input id="newTotalMarks" type="number" value="100" min="1">
+              <input
+                id="newTotalMarks"
+                type="number"
+                value="100"
+                min="1"
+              >
             </div>
           </div>
+
           <div class="field">
             <label for="newDesc">Description / Instructions</label>
-            <textarea id="newDesc" rows="3" placeholder="Provide problem requirements, submission guidelines..."></textarea>
+            <textarea
+              id="newDesc"
+              rows="3"
+              placeholder="Provide problem requirements, submission guidelines..."
+            ></textarea>
           </div>
+
           <div class="two-col">
             <div class="field">
               <label for="newDueDate">Due Date</label>
               <input id="newDueDate" type="date">
             </div>
+
             <div class="field">
               <label for="newDueTime">Due Time</label>
               <input id="newDueTime" type="time">
             </div>
           </div>
+
           <div class="field">
-            <label for="newQFile">Question Paper (Optional, max 5MB)</label>
+            <label for="newQFile">
+              Question Paper (Optional, max 5MB)
+            </label>
             <input id="newQFile" type="file">
           </div>
-          <button class="btn" id="postAssignmentBtn" type="button">Post Assignment</button>
+
+          <button class="btn" id="postAssignmentBtn" type="button">
+            Post Assignment
+          </button>
+
         </div>
       </div>
     </section>
@@ -113,7 +553,8 @@
         <h3>My Exams</h3>
         <div class="panel-body" id="examsList"></div>
       </div>
-      <div id="examResultsWrap" class="hidden" style="margin-top: 16px;">
+
+      <div id="examResultsWrap" class="hidden">
         <div class="panel">
           <div class="panel-body" id="examResults"></div>
         </div>
@@ -124,43 +565,75 @@
     <section id="tab-newExam" class="hidden">
       <div class="panel">
         <h3>Create MCQ Exam</h3>
+
         <div class="panel-body">
+
           <div class="two-col">
             <div class="field">
               <label for="examTitle">Exam Title</label>
-              <input id="examTitle" type="text" placeholder="e.g. Mid-Term MCQ Assessment">
+              <input
+                id="examTitle"
+                type="text"
+                placeholder="e.g. Mid-Term MCQ Assessment"
+              >
             </div>
+
             <div class="field">
               <label for="examDuration">Duration (Minutes)</label>
-              <input id="examDuration" type="number" value="30" min="1">
+              <input
+                id="examDuration"
+                type="number"
+                value="30"
+                min="1"
+              >
             </div>
           </div>
+
           <div class="two-col">
             <div class="field">
               <label for="examDate">Exam Date</label>
               <input id="examDate" type="date">
             </div>
+
             <div class="field">
               <label for="examStart">Start Time</label>
               <input id="examStart" type="time">
             </div>
           </div>
+
           <div id="questionsWrap" style="margin-top: 12px;"></div>
+
           <div class="row-buttons" style="margin-top: 16px;">
-            <button class="btn secondary" id="addQuestionBtn" type="button">+ Add Question</button>
-            <button class="btn" id="createExamBtn" type="button">Create Exam</button>
+            <button
+              class="btn secondary"
+              id="addQuestionBtn"
+              type="button"
+            >
+              + Add Question
+            </button>
+
+            <button
+              class="btn"
+              id="createExamBtn"
+              type="button"
+            >
+              Create Exam
+            </button>
           </div>
+
         </div>
       </div>
     </section>
+
   </main>
 
   <!-- Overlay Notification & Dialog Roots -->
   <div id="noticeRoot"></div>
   <div id="modalRoot"></div>
 
-  <!-- Client Scripts with cache-busting -->
+  <!-- Existing Client Scripts -->
   <script src="js/api.js?v=2.2"></script>
   <script src="js/faculty.js?v=2.4"></script>
+
 </body>
 </html>
